@@ -1,0 +1,19 @@
+{
+  "name": "elm-regl-js",
+  "version": "1.3.4",
+  "description": "JS port of the elm-regl",
+  "keywords": [
+    "elm",
+    "regl",
+    "webgl"
+  ],
+  "author": "linsyking",
+  "license": "MIT",
+  "dependencies": {
+    "regl": "^2.1.1"
+  },
+  "devDependencies": {
+    "brfs": "^2.0.2",
+    "browserify": "^17.0.1"
+  }
+}
