@@ -1312,7 +1312,7 @@ function execCmd(v) {
     }
 }
 
-globalThis.ElmREGL = {
+globalThis.MlREGL = {
     loadGLProgram,
     init,
     execCmd
