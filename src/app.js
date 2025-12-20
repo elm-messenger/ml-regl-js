@@ -8,9 +8,7 @@ const loadedTextures = {};
 
 let TextManager = null;
 
-let ElmApp = null;
-
-let gview = null;
+let MlApp = null;
 
 let global_error = 0;
 
@@ -770,7 +768,7 @@ function loadTextureREGL(texture_name, opts, w, h) {
         width: w,
         height: h
     }
-    ElmApp.ports.recvREGLCmd.send({
+    MlApp.recvREGLCmd({
         _c: "loadTexture",
         response
     });
@@ -867,22 +865,9 @@ function createGLProgram(prog_name, proto) {
     const response = {
         name: prog_name
     }
-    ElmApp.ports.recvREGLCmd.send({
+    MlApp.recvREGLCmd({
         _c: "createGLProgram",
         response
-    });
-}
-
-
-async function setView(view) {
-    gview = view;
-    resolver();
-}
-
-function updateElm(delta) {
-    return new Promise((resolve, _) => {
-        resolver = resolve;
-        ElmApp.ports.reglupdate.send(delta);
     });
 }
 
@@ -1170,7 +1155,8 @@ async function step() {
 
         const ts = browserSupportNow ? navigationStartTime + window.performance.now() : Date.now();
 
-        await updateElm(ts);
+        // await updateElm(ts);
+        const gview = MlApp.updateElm(ts);
         // const t2 = performance.now();
         // console.log("Time to update Elm: " + (t2 - t1) + "ms");
 
@@ -1269,7 +1255,7 @@ function loadBuiltinGLProgram(prog_name) {
 function init(canvas, app, override_conf) {
     // Initialize regl etc.
     // Called from JS
-    ElmApp = app;
+    MlApp = app;
     const defconfig = {
         canvas,
         extensions: ['OES_standard_derivatives'],
@@ -1297,7 +1283,7 @@ async function loadFont(v) {
     const response = {
         font: v._n
     }
-    ElmApp.ports.recvREGLCmd.send({
+    MlApp.recvREGLCmd({
         _c: "loadFont",
         response
     });
@@ -1328,7 +1314,6 @@ function execCmd(v) {
 
 globalThis.ElmREGL = {
     loadGLProgram,
-    setView,
     init,
     execCmd
 }
