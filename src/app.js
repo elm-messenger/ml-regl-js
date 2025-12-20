@@ -762,7 +762,7 @@ const programs = {
 
 function loadTextureREGL(texture_name, opts, w, h) {
     loadedTextures[texture_name] = regl.texture(opts);
-    // Response to Elm
+    // Response
     const response = {
         texture: texture_name,
         width: w,
@@ -1155,10 +1155,9 @@ async function step() {
 
         const ts = browserSupportNow ? navigationStartTime + window.performance.now() : Date.now();
 
-        // await updateElm(ts);
-        const gview = MlApp.updateElm(ts);
+        const gview = MlApp.update(ts);
         // const t2 = performance.now();
-        // console.log("Time to update Elm: " + (t2 - t1) + "ms");
+        // console.log("Time to update: " + (t2 - t1) + "ms");
 
         for (let i = 0; i < userConfig.fboNum; i++) {
             freePalette[i] = true;
@@ -1239,7 +1238,7 @@ async function start(v) {
 
 function loadGLProgram(prog_name, f) {
     // Initialize program from JS
-    // Not intended to be used by Elm
+    // Not intended to be used by App
     loadedPrograms[prog_name] = f(regl);
 }
 
@@ -1290,7 +1289,7 @@ async function loadFont(v) {
 }
 
 function execCmd(v) {
-    // APIs accessible from Elm
+    // APIs accessible from App
     // NOTE. May happen before start
     // console.log(v);
     try {
