@@ -1,6 +1,7 @@
 let regl = null;
 const readFileSync = require('fs').readFileSync;
 const TM = require('./text.js');
+const makeAudioRuntime = require('./audio.js');
 
 const loadedPrograms = {};
 
@@ -9,6 +10,8 @@ const loadedTextures = {};
 let TextManager = null;
 
 let MlApp = null;
+
+let AudioRuntime = null;
 
 let global_error = 0;
 
@@ -1269,6 +1272,7 @@ function init(canvas, app, override_conf) {
     }
     regl = require('regl')(defconfig);
     TextManager = new TM(regl);
+    AudioRuntime = makeAudioRuntime(MlApp);
 }
 
 function config(c) {
@@ -1311,8 +1315,20 @@ function execCmd(v) {
     }
 }
 
+function execAudioCmd(payload) {
+    if (!AudioRuntime) {
+        return;
+    }
+    try {
+        AudioRuntime.execAudioCmd(payload);
+    } catch (e) {
+        stopError(e);
+    }
+}
+
 globalThis.MlREGL = {
     loadGLProgram,
     init,
-    execCmd
+    execCmd,
+    execAudioCmd
 }

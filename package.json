@@ -10,7 +10,8 @@
   "author": "linsyking",
   "license": "MIT",
   "dependencies": {
-    "regl": "^2.1.1"
+    "regl": "^2.1.1",
+    "uglify-js": "^3.19.3"
   },
   "devDependencies": {
     "brfs": "^2.0.2",
