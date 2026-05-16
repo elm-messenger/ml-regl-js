@@ -13,12 +13,12 @@
 //   { action: "setLoopConfig", nodeGroupId, loop }
 //   { action: "setPlaybackRate", nodeGroupId, playbackRate }
 //
-// Each load is { requestId, audioUrl }.
+// Each load is { audioUrl }.
 //
 // Results are reported back through MlApp.recvAudioMsg(...) with shapes:
 //   { _c: "audioContextReady", sampleRate }
-//   { _c: "audioLoadSuccess", requestId, bufferId, duration }
-//   { _c: "audioLoadFailed",  requestId, error }
+//   { _c: "audioLoadSuccess", audioUrl, bufferId, duration }
+//   { _c: "audioLoadFailed",  audioUrl, error }
 //
 // Times are absolute milliseconds (matching the OCaml Tick/`Date.now()`
 // scale). Loop start/end and start_at are durations in milliseconds.
@@ -178,7 +178,7 @@ function makeAudioRuntime(MlApp) {
         } catch (_e) {
             MlApp.recvAudioMsg({
                 _c: "audioLoadFailed",
-                requestId: req.requestId,
+                audioUrl: req.audioUrl,
                 error: "NetworkError",
             });
             return;
@@ -189,14 +189,14 @@ function makeAudioRuntime(MlApp) {
             audioBuffers.push(decoded);
             MlApp.recvAudioMsg({
                 _c: "audioLoadSuccess",
-                requestId: req.requestId,
+                audioUrl: req.audioUrl,
                 bufferId,
                 duration: decoded.length / decoded.sampleRate,
             });
         } catch (e) {
             MlApp.recvAudioMsg({
                 _c: "audioLoadFailed",
-                requestId: req.requestId,
+                audioUrl: req.audioUrl,
                 error: "FailedToDecode",
             });
         }
