@@ -816,7 +816,11 @@ function loadTexture(texture_name, opts) {
 }
 
 
-function createGLProgram(prog_name, proto) {
+function createGLProgram(prog_name, program) {
+
+}
+
+function createGLProgramold(prog_name, proto) {
     if (loadedPrograms[prog_name]) {
         throw new Error("Program already exists: " + prog_name);
     }
@@ -951,7 +955,7 @@ function drawSingleCommand(v) {
         execProg(p, v);
     } else if (v._c == 1) {
         // REGL commands
-        if (v._n == "clear"){
+        if (v._n == "clear") {
             const a = v.color[3];
             v.color[0] *= a;
             v.color[1] *= a;
@@ -1208,8 +1212,8 @@ async function start(v) {
         userConfig.fboNum = v.fboNum;
     }
     let toloadprograms = Object.keys(programs);
-    if ("programs" in v) {
-        toloadprograms = v.programs;
+    if (v.builtinPrograms) {
+        toloadprograms = v.builtinPrograms;
     }
 
     // Init
@@ -1298,18 +1302,18 @@ function config(c) {
 }
 
 async function loadFont(v) {
-    await TextManager.loadFont(v._n, v.img, v.json);
+    await TextManager.loadFont(v.name, v.imageUrl, v.jsonUrl);
     if (MlApp && MlApp.recvREGLCmdPb) {
         MlApp.recvREGLCmdPb(
             BackendEventPb.encode(
                 BackendEventPb.create({
-                    fontLoaded: { name: v._n },
+                    fontLoaded: { name: v.name },
                 })
             ).finish()
         );
     } else {
         const response = {
-            font: v._n
+            font: v.name
         }
         MlApp.recvREGLCmd({
             _c: "loadFont",
@@ -1346,11 +1350,7 @@ function execCmdPb(bytes) {
         for (let i = 0; i < commands.length; i++) {
             const cmd = commands[i];
             if (cmd.loadFont) {
-                loadFont({
-                    _n: cmd.loadFont.name,
-                    img: cmd.loadFont.imageUrl,
-                    json: cmd.loadFont.jsonUrl,
-                });
+                loadFont(cmd.loadFont);
             } else if (cmd.loadTexture) {
                 const opts = {
                     data: cmd.loadTexture.url,
@@ -1373,46 +1373,12 @@ function execCmdPb(bytes) {
             } else if (cmd.configRegl != null) {
                 config({ interval: cmd.configRegl.intervalMs });
             } else if (cmd.startRegl) {
-                start({
-                    virtWidth: cmd.startRegl.virtWidth,
-                    virtHeight: cmd.startRegl.virtHeight,
-                    fboNum: cmd.startRegl.fboNum,
-                    programs:
-                        cmd.startRegl.builtinPrograms &&
-                        cmd.startRegl.builtinPrograms.length > 0
-                            ? cmd.startRegl.builtinPrograms
-                            : undefined,
-                });
+                start(cmd.startRegl);
             } else if (cmd.createProgram) {
-                throw new Error('createProgram is not supported via protobuf yet');
-            } else if (cmd.loadAudio) {
-                throw new Error('loadAudio is not supported via backend protobuf');
+                createGLProgram(cmd.createProgram.name, cmd.program);
             } else {
                 throw new Error('Unknown protobuf backend command');
             }
-        }
-    } catch (e) {
-        stopError(e);
-    }
-}
-
-function execCmd(v) {
-    // APIs accessible from App
-    // NOTE. May happen before start
-    // console.log(v);
-    try {
-        if (v._c == "loadFont") {
-            loadFont(v);
-        } else if (v._c == "loadTexture") {
-            loadTexture(v._n, v.opts);
-        } else if (v._c == "createGLProgram") {
-            createGLProgram(v._n, v.proto);
-        } else if (v._c == "config") {
-            config(v.config);
-        } else if (v._c == "start") {
-            start(v);
-        } else {
-            throw new Error("No such command: " + v._c);
         }
     } catch (e) {
         stopError(e);
@@ -1431,9 +1397,8 @@ function execAudioCmdPb(bytes) {
 }
 
 globalThis.MlREGL = {
-    loadGLProgram,
-    init,
-    execCmd,
-    execCmdPb,
-    execAudioCmdPb
+    loadGLProgram, // Called by user
+    init, // Called by user
+    execCmdPb, // Called from app
+    execAudioCmdPb // Called from app
 }
