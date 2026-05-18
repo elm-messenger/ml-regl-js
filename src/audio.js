@@ -7,14 +7,9 @@
 // Times are absolute milliseconds (matching the OCaml Tick/`Date.now()`
 // scale). Loop start/end and start_at are durations in milliseconds.
 
-const audioPb = require('./generated/mlregl_pb.js');
-
-const AudioCommandBatchPb =
-    audioPb.mlregl.transport.audio.AudioCommandBatch;
-const AudioBackendEventPb =
-    audioPb.mlregl.transport.audio.AudioBackendEvent;
-const AudioLoadErrorPb =
-    audioPb.mlregl.transport.audio.AudioLoadError;
+let AudioCommandBatchPb = null;
+let AudioBackendEventPb = null;
+let AudioLoadErrorPb = null;
 
 function decodeVolumeTimeline(timeline) {
     const points = timeline.points || [];
@@ -105,14 +100,17 @@ function encodeAudioBackendEventPb(msg) {
     return AudioBackendEventPb.encode(AudioBackendEventPb.create(msg)).finish();
 }
 
-function makeAudioRuntime(MlApp) {
+function makeAudioRuntime(MlApp, pb) {
+    AudioCommandBatchPb = pb.mlregl.transport.audio.AudioCommandBatch;
+    AudioBackendEventPb = pb.mlregl.transport.audio.AudioBackendEvent;
+    AudioLoadErrorPb = pb.mlregl.transport.audio.AudioLoadError;
     const AudioCtor =
         window.AudioContext || window.webkitAudioContext || null;
     if (!AudioCtor) {
         console.warn("Web Audio API not supported");
         return {
-            execAudioCmdPb: () => {},
-            resume: () => {},
+            execAudioCmdPb: () => { },
+            resume: () => { },
         };
     }
 

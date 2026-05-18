@@ -2,11 +2,11 @@ let regl = null;
 const readFileSync = require('fs').readFileSync;
 const TM = require('./text.js');
 const makeAudioRuntime = require('./audio.js');
-const backendPb = require('./generated/mlregl_pb.js');
+const pb = require('./generated/mlregl_pb.js');
 
 const BackendCommandBatchPb =
-    backendPb.mlregl.transport.backend.BackendCommandBatch;
-const BackendEventPb = backendPb.mlregl.transport.backend.BackendEvent;
+    pb.mlregl.transport.backend.BackendCommandBatch;
+const BackendEventPb = pb.mlregl.transport.backend.BackendEvent;
 
 const loadedPrograms = {};
 
@@ -22,8 +22,6 @@ let global_error = 0;
 
 // X, Y, Scale, Rotation
 let camera = [0.0, 0.0, 1.0, 0.0];
-
-let resolver = null;
 
 let userConfig = {
     interval: 0,
@@ -1290,7 +1288,7 @@ function init(canvas, app, override_conf) {
     }
     regl = require('regl')(defconfig);
     TextManager = new TM(regl);
-    AudioRuntime = makeAudioRuntime(MlApp);
+    AudioRuntime = makeAudioRuntime(MlApp, pb);
 }
 
 function config(c) {
