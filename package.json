@@ -10,11 +10,13 @@
   "author": "linsyking",
   "license": "MIT",
   "dependencies": {
+    "protobufjs": "^8.3.0",
     "regl": "^2.1.1",
     "uglify-js": "^3.19.3"
   },
   "devDependencies": {
     "brfs": "^2.0.2",
-    "browserify": "^17.0.1"
+    "browserify": "^17.0.1",
+    "protobufjs-cli": "^2.3.0"
   }
 }

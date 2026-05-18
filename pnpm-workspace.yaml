@@ -1,2 +1,3 @@
 allowBuilds:
   es5-ext: true
+  protobufjs: true

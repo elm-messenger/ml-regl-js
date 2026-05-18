@@ -1315,12 +1315,12 @@ function execCmd(v) {
     }
 }
 
-function execAudioCmd(payload) {
+function execAudioCmdPb(bytes) {
     if (!AudioRuntime) {
         return;
     }
     try {
-        AudioRuntime.execAudioCmd(payload);
+        AudioRuntime.execAudioCmdPb(bytes);
     } catch (e) {
         stopError(e);
     }
@@ -1330,5 +1330,5 @@ globalThis.MlREGL = {
     loadGLProgram,
     init,
     execCmd,
-    execAudioCmd
+    execAudioCmdPb
 }

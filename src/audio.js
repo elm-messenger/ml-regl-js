@@ -2,26 +2,108 @@
 // (https://github.com/MartinSStewart/elm-audio).
 //
 // Public surface (called from app.js / OCaml):
-//   AudioRuntime.execAudioCmd({ actions: [...], loads: [...] })
-//
-// Each action is one of:
-//   { action: "startSound", nodeGroupId, bufferId, startTime, startAt,
-//     volume, volumeTimelines, loop, playbackRate }
-//   { action: "stopSound", nodeGroupId }
-//   { action: "setVolume", nodeGroupId, volume }
-//   { action: "setVolumeAt", nodeGroupId, volumeAt }
-//   { action: "setLoopConfig", nodeGroupId, loop }
-//   { action: "setPlaybackRate", nodeGroupId, playbackRate }
-//
-// Each load is { audioUrl }.
-//
-// Results are reported back through MlApp.recvAudioMsg(...) with shapes:
-//   { _c: "audioContextReady", sampleRate }
-//   { _c: "audioLoadSuccess", audioUrl, bufferId, duration }
-//   { _c: "audioLoadFailed",  audioUrl, error }
+//   AudioRuntime.execAudioCmdPb(Uint8Array)
 //
 // Times are absolute milliseconds (matching the OCaml Tick/`Date.now()`
 // scale). Loop start/end and start_at are durations in milliseconds.
+
+const audioPb = require('./generated/transport_audio_pb.js');
+
+const AudioCommandBatchPb =
+    audioPb.mlregl.transport.audio.AudioCommandBatch;
+const AudioBackendEventPb =
+    audioPb.mlregl.transport.audio.AudioBackendEvent;
+const AudioLoadErrorPb =
+    audioPb.mlregl.transport.audio.AudioLoadError;
+
+function decodeVolumeTimeline(timeline) {
+    const points = timeline.points || [];
+    return points.map((point) => ({
+        time: point.time,
+        volume: point.volume,
+    }));
+}
+
+function decodeLoop(loop) {
+    if (!loop) {
+        return null;
+    }
+    return {
+        loopStart: loop.loopStart,
+        loopEnd: loop.loopEnd,
+    };
+}
+
+function decodeAudioAction(action) {
+    if (action.startSound) {
+        return {
+            action: 'startSound',
+            nodeGroupId: action.startSound.nodeGroupId,
+            bufferId: action.startSound.bufferId,
+            startTime: action.startSound.startTime,
+            startAt: action.startSound.startAt,
+            volume: action.startSound.volume,
+            volumeTimelines: (action.startSound.volumeTimelines || []).map(
+                decodeVolumeTimeline
+            ),
+            loop: decodeLoop(action.startSound.loop),
+            playbackRate: action.startSound.playbackRate,
+        };
+    }
+    if (action.stopSound) {
+        return {
+            action: 'stopSound',
+            nodeGroupId: action.stopSound.nodeGroupId,
+        };
+    }
+    if (action.setVolume) {
+        return {
+            action: 'setVolume',
+            nodeGroupId: action.setVolume.nodeGroupId,
+            volume: action.setVolume.volume,
+        };
+    }
+    if (action.setVolumeAt) {
+        return {
+            action: 'setVolumeAt',
+            nodeGroupId: action.setVolumeAt.nodeGroupId,
+            volumeAt: (action.setVolumeAt.volumeAt || []).map(
+                decodeVolumeTimeline
+            ),
+        };
+    }
+    if (action.setLoopConfig) {
+        return {
+            action: 'setLoopConfig',
+            nodeGroupId: action.setLoopConfig.nodeGroupId,
+            loop: decodeLoop(action.setLoopConfig.loop),
+        };
+    }
+    if (action.setPlaybackRate) {
+        return {
+            action: 'setPlaybackRate',
+            nodeGroupId: action.setPlaybackRate.nodeGroupId,
+            playbackRate: action.setPlaybackRate.playbackRate,
+        };
+    }
+    return null;
+}
+
+function decodeAudioCommandBatch(bytes) {
+    const batch = AudioCommandBatchPb.decode(bytes);
+    return {
+        actions: (batch.actions || [])
+            .map(decodeAudioAction)
+            .filter((action) => action != null),
+        loads: (batch.loads || []).map((load) => ({
+            audioUrl: load.audioUrl,
+        })),
+    };
+}
+
+function encodeAudioBackendEventPb(msg) {
+    return AudioBackendEventPb.encode(AudioBackendEventPb.create(msg)).finish();
+}
 
 function makeAudioRuntime(MlApp) {
     const AudioCtor =
@@ -29,7 +111,7 @@ function makeAudioRuntime(MlApp) {
     if (!AudioCtor) {
         console.warn("Web Audio API not supported");
         return {
-            execAudioCmd: () => {},
+            execAudioCmdPb: () => {},
             resume: () => {},
         };
     }
@@ -43,10 +125,11 @@ function makeAudioRuntime(MlApp) {
     function ensureContext() {
         if (context) return context;
         context = new AudioCtor();
-        MlApp.recvAudioMsg({
-            _c: "audioContextReady",
-            sampleRate: context.sampleRate,
-        });
+        MlApp.recvAudioMsgPb(
+            encodeAudioBackendEventPb({
+                audioContextReady: { sampleRate: context.sampleRate },
+            })
+        );
         return context;
     }
 
@@ -176,29 +259,39 @@ function makeAudioRuntime(MlApp) {
             const resp = await fetch(req.audioUrl);
             buf = await resp.arrayBuffer();
         } catch (_e) {
-            MlApp.recvAudioMsg({
-                _c: "audioLoadFailed",
-                audioUrl: req.audioUrl,
-                error: "NetworkError",
-            });
+            MlApp.recvAudioMsgPb(
+                encodeAudioBackendEventPb({
+                    audioLoadFailed: {
+                        audioUrl: req.audioUrl,
+                        error: AudioLoadErrorPb.AUDIO_LOAD_ERROR_NETWORK,
+                    },
+                })
+            );
             return;
         }
         try {
             const decoded = await context.decodeAudioData(buf);
             const bufferId = audioBuffers.length;
             audioBuffers.push(decoded);
-            MlApp.recvAudioMsg({
-                _c: "audioLoadSuccess",
-                audioUrl: req.audioUrl,
-                bufferId,
-                duration: decoded.length / decoded.sampleRate,
-            });
+            MlApp.recvAudioMsgPb(
+                encodeAudioBackendEventPb({
+                    audioLoadSuccess: {
+                        audioUrl: req.audioUrl,
+                        bufferId,
+                        duration: decoded.length / decoded.sampleRate,
+                    },
+                })
+            );
         } catch (e) {
-            MlApp.recvAudioMsg({
-                _c: "audioLoadFailed",
-                audioUrl: req.audioUrl,
-                error: "FailedToDecode",
-            });
+            MlApp.recvAudioMsgPb(
+                encodeAudioBackendEventPb({
+                    audioLoadFailed: {
+                        audioUrl: req.audioUrl,
+                        error:
+                            AudioLoadErrorPb.AUDIO_LOAD_ERROR_FAILED_TO_DECODE,
+                    },
+                })
+            );
         }
     }
 
@@ -273,7 +366,7 @@ function makeAudioRuntime(MlApp) {
         }
     }
 
-    function execAudioCmd(payload) {
+    function applyAudioCommandBatch(payload) {
         ensureContext();
         // Browsers block audio until a user gesture; cheaply attempt to
         // resume on every call. No-op if the context is already running.
@@ -291,13 +384,17 @@ function makeAudioRuntime(MlApp) {
         }
     }
 
+    function execAudioCmdPb(bytes) {
+        applyAudioCommandBatch(decodeAudioCommandBatch(bytes));
+    }
+
     function resume() {
         if (context && context.state === "suspended") {
             context.resume();
         }
     }
 
-    return { execAudioCmd, resume };
+    return { execAudioCmdPb, resume };
 }
 
 module.exports = makeAudioRuntime;
