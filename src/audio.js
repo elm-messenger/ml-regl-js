@@ -7,7 +7,7 @@
 // Times are absolute milliseconds (matching the OCaml Tick/`Date.now()`
 // scale). Loop start/end and start_at are durations in milliseconds.
 
-const audioPb = require('./generated/transport_audio_pb.js');
+const audioPb = require('./generated/mlregl_pb.js');
 
 const AudioCommandBatchPb =
     audioPb.mlregl.transport.audio.AudioCommandBatch;

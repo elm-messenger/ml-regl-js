@@ -2,6 +2,11 @@ let regl = null;
 const readFileSync = require('fs').readFileSync;
 const TM = require('./text.js');
 const makeAudioRuntime = require('./audio.js');
+const backendPb = require('./generated/mlregl_pb.js');
+
+const BackendCommandBatchPb =
+    backendPb.mlregl.transport.backend.BackendCommandBatch;
+const BackendEventPb = backendPb.mlregl.transport.backend.BackendEvent;
 
 const loadedPrograms = {};
 
@@ -765,16 +770,29 @@ const programs = {
 
 function loadTextureREGL(texture_name, opts, w, h) {
     loadedTextures[texture_name] = regl.texture(opts);
-    // Response
-    const response = {
-        texture: texture_name,
-        width: w,
-        height: h
+    if (MlApp && MlApp.recvREGLCmdPb) {
+        MlApp.recvREGLCmdPb(
+            BackendEventPb.encode(
+                BackendEventPb.create({
+                    textureLoaded: {
+                        name: texture_name,
+                        width: w,
+                        height: h,
+                    },
+                })
+            ).finish()
+        );
+    } else {
+        const response = {
+            texture: texture_name,
+            width: w,
+            height: h
+        }
+        MlApp.recvREGLCmd({
+            _c: "loadTexture",
+            response
+        });
     }
-    MlApp.recvREGLCmd({
-        _c: "loadTexture",
-        response
-    });
 }
 
 function loadTexture(texture_name, opts) {
@@ -1283,13 +1301,101 @@ function config(c) {
 
 async function loadFont(v) {
     await TextManager.loadFont(v._n, v.img, v.json);
-    const response = {
-        font: v._n
+    if (MlApp && MlApp.recvREGLCmdPb) {
+        MlApp.recvREGLCmdPb(
+            BackendEventPb.encode(
+                BackendEventPb.create({
+                    fontLoaded: { name: v._n },
+                })
+            ).finish()
+        );
+    } else {
+        const response = {
+            font: v._n
+        }
+        MlApp.recvREGLCmd({
+            _c: "loadFont",
+            response
+        });
     }
-    MlApp.recvREGLCmd({
-        _c: "loadFont",
-        response
-    });
+}
+
+function magOptionToString(v) {
+    return v === 1 ? 'nearest' : 'linear';
+}
+
+function minOptionToString(v) {
+    switch (v) {
+        case 1:
+            return 'nearest';
+        case 2:
+            return 'nearest mipmap nearest';
+        case 3:
+            return 'linear mipmap nearest';
+        case 4:
+            return 'nearest mipmap linear';
+        case 5:
+            return 'linear mipmap linear';
+        default:
+            return 'linear';
+    }
+}
+
+function execCmdPb(bytes) {
+    try {
+        const batch = BackendCommandBatchPb.decode(bytes);
+        const commands = batch.commands || [];
+        for (let i = 0; i < commands.length; i++) {
+            const cmd = commands[i];
+            if (cmd.loadFont) {
+                loadFont({
+                    _n: cmd.loadFont.name,
+                    img: cmd.loadFont.imageUrl,
+                    json: cmd.loadFont.jsonUrl,
+                });
+            } else if (cmd.loadTexture) {
+                const opts = {
+                    data: cmd.loadTexture.url,
+                    mag: magOptionToString(
+                        cmd.loadTexture.options
+                            ? cmd.loadTexture.options.mag
+                            : 0
+                    ),
+                    min: minOptionToString(
+                        cmd.loadTexture.options
+                            ? cmd.loadTexture.options.min
+                            : 0
+                    ),
+                };
+                if (cmd.loadTexture.options && cmd.loadTexture.options.crop) {
+                    const c = cmd.loadTexture.options.crop;
+                    opts.subimg = [c.x, c.y, c.width, c.height];
+                }
+                loadTexture(cmd.loadTexture.name, opts);
+            } else if (cmd.configRegl != null) {
+                config({ interval: cmd.configRegl.intervalMs });
+            } else if (cmd.startRegl) {
+                start({
+                    virtWidth: cmd.startRegl.virtWidth,
+                    virtHeight: cmd.startRegl.virtHeight,
+                    fboNum: cmd.startRegl.fboNum,
+                    programs:
+                        cmd.startRegl.builtinPrograms &&
+                        cmd.startRegl.builtinPrograms.length > 0
+                            ? cmd.startRegl.builtinPrograms
+                            : undefined,
+                });
+            } else if (cmd.createProgram) {
+                throw new Error('createProgram is not supported via protobuf yet');
+            } else if (cmd.loadAudio) {
+                throw new Error('loadAudio is not supported via backend protobuf');
+            } else {
+                throw new Error('Unknown protobuf backend command');
+            }
+        }
+    } catch (e) {
+        stopError(e);
+    }
 }
 
 function execCmd(v) {
@@ -1330,5 +1436,6 @@ globalThis.MlREGL = {
     loadGLProgram,
     init,
     execCmd,
+    execCmdPb,
     execAudioCmdPb
 }
