@@ -834,26 +834,24 @@ function decodeFields(fields) {
     return result;
 }
 
+function decodeProgramValue(value) {
+    if (value.dynVal) {
+        return regl.prop(value.dynVal);
+    }
+    if (value.staticVal) {
+        return decodeValue(value.staticVal);
+    }
+    if (value.dynTextval) {
+        return regl.prop(value.dynTextval);
+    }
+    return undefined;
+}
+
 function decodeProgramMapping(mapping) {
     if (!mapping) {
         return undefined;
     }
-    if (mapping.dynVal) {
-        return { value: regl.prop(mapping.dynVal), textureProp: null };
-    }
-    if (mapping.dynTextval) {
-        return {
-            value: regl.prop(mapping.dynTextval),
-            textureProp: mapping.dynTextval
-        };
-    }
-    if (mapping.staticVal) {
-        return {
-            value: decodeValue(mapping.staticVal),
-            textureProp: null
-        };
-    }
-    return undefined;
+    return { value: decodeProgramValue(mapping.val), textureProp: mapping.val.dynTextval };
 }
 
 
@@ -891,9 +889,9 @@ function createGLProgram(prog_name, program) {
         attributes[mapping.key] = resolved.value;
     }
 
-    const primitive = decodeProgramMapping(program.primitive);
-    const elements = decodeProgramMapping(program.elements);
-    const count = decodeProgramMapping(program.count);
+    const primitive = decodeProgramValue(program.primitive);
+    const elements = decodeProgramValue(program.elements);
+    const count = decodeProgramValue(program.count);
 
     const initfunc = (args) => {
         for (let i = 0; i < texturePropNames.length; i++) {
