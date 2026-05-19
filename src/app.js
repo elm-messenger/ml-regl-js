@@ -1197,9 +1197,11 @@ async function step() {
 
         const ts = browserSupportNow ? navigationStartTime + window.performance.now() : Date.now();
 
-        const gview = MlApp.update(ts);
+        MlApp.update(ts);
         // const t2 = performance.now();
         // console.log("Time to update: " + (t2 - t1) + "ms");
+
+        const gview = MlApp.view();
 
         for (let i = 0; i < userConfig.fboNum; i++) {
             freePalette[i] = true;
@@ -1385,6 +1387,8 @@ function execCmdPb(bytes) {
                 start(cmd.startRegl);
             } else if (cmd.createProgram) {
                 createGLProgram(cmd.createProgram.name, cmd.program);
+            } else if (cmd.loadAudio) {
+                AudioRuntime.loadAudio(cmd.loadAudio.audioUrl);
             } else {
                 throw new Error('Unknown protobuf backend command');
             }

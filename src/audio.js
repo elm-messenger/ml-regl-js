@@ -250,17 +250,17 @@ function makeAudioRuntime(MlApp, pb) {
         };
     }
 
-    async function loadAudio(req) {
+    async function loadAudio(audiourl) {
         ensureContext();
         let buf;
         try {
-            const resp = await fetch(req.audioUrl);
+            const resp = await fetch(audiourl);
             buf = await resp.arrayBuffer();
         } catch (_e) {
             MlApp.recvAudioMsgPb(
                 encodeAudioBackendEventPb({
                     audioLoadFailed: {
-                        audioUrl: req.audioUrl,
+                        audioUrl: audiourl,
                         error: AudioLoadErrorPb.AUDIO_LOAD_ERROR_NETWORK,
                     },
                 })
@@ -274,7 +274,7 @@ function makeAudioRuntime(MlApp, pb) {
             MlApp.recvAudioMsgPb(
                 encodeAudioBackendEventPb({
                     audioLoadSuccess: {
-                        audioUrl: req.audioUrl,
+                        audioUrl: audiourl,
                         bufferId,
                         duration: decoded.length / decoded.sampleRate,
                     },
@@ -284,7 +284,7 @@ function makeAudioRuntime(MlApp, pb) {
             MlApp.recvAudioMsgPb(
                 encodeAudioBackendEventPb({
                     audioLoadFailed: {
-                        audioUrl: req.audioUrl,
+                        audioUrl: audiourl,
                         error:
                             AudioLoadErrorPb.AUDIO_LOAD_ERROR_FAILED_TO_DECODE,
                     },
@@ -373,12 +373,8 @@ function makeAudioRuntime(MlApp, pb) {
         }
         const now = Date.now();
         const actions = payload.actions || [];
-        const loads = payload.loads || [];
         for (let i = 0; i < actions.length; i++) {
             applyAction(actions[i], now);
-        }
-        for (let i = 0; i < loads.length; i++) {
-            loadAudio(loads[i]);
         }
     }
 
@@ -386,13 +382,7 @@ function makeAudioRuntime(MlApp, pb) {
         applyAudioCommandBatch(decodeAudioCommandBatch(bytes));
     }
 
-    function resume() {
-        if (context && context.state === "suspended") {
-            context.resume();
-        }
-    }
-
-    return { execAudioCmdPb, resume };
+    return { execAudioCmdPb, loadAudio };
 }
 
 module.exports = makeAudioRuntime;
