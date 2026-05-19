@@ -1025,13 +1025,13 @@ function drawComp(v) {
     const r2pid = drawCmd(v.right);
     const npid = getFreePalette();
     const comp = v.compositor;
-    const v = decodeFields(comp.fields);
+    const vo = decodeFields(comp.fields);
     palettes[npid]({}, () => {
         regl.clear({ color: [0, 0, 0, 0] });
         const p = loadedPrograms[comp.program];
-        v.t1 = fbos[r1pid];
-        v.t2 = fbos[r2pid];
-        execProg(p, v);
+        vo.t1 = fbos[r1pid];
+        vo.t2 = fbos[r2pid];
+        execProg(p, vo);
     });
     freePID(r1pid);
     freePID(r2pid);
@@ -1223,13 +1223,13 @@ async function step() {
 
 async function start(v) {
     // const t0 = performance.now();
-    if ("virtWidth" in v) {
+    if (v.virtWidth) {
         userConfig.virtWidth = v.virtWidth;
     }
-    if ("virtHeight" in v) {
+    if (v.virtHeight) {
         userConfig.virtHeight = v.virtHeight;
     }
-    if ("fboNum" in v) {
+    if (v.fboNum) {
         userConfig.fboNum = v.fboNum;
     }
     let toloadprograms = Object.keys(programs);
