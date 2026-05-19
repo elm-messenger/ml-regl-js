@@ -7,6 +7,7 @@ const pb = require('./generated/mlregl_pb.js');
 const BackendCommandBatchPb =
     pb.mlregl.transport.backend.BackendCommandBatch;
 const BackendEventPb = pb.mlregl.transport.backend.BackendEvent;
+const RenderablePb = pb.mlregl.transport.render.Renderable;
 
 const loadedPrograms = {};
 
@@ -803,44 +804,52 @@ function loadTexture(texture_name, opts) {
     }
 }
 
-function decodeProgramStaticValue(value) {
+function decodeValue(value) {
     if (!value) {
         return undefined;
     }
-    if (value.kind === 'numberValue' || Object.hasOwnProperty.call(value, 'numberValue')) {
+    if (value.numberValue) {
         return value.numberValue;
     }
-    if (value.kind === 'stringValue' || Object.hasOwnProperty.call(value, 'stringValue')) {
+    if (value.stringValue) {
         return value.stringValue;
     }
-    if (value.kind === 'numberArrayValue' || Object.hasOwnProperty.call(value, 'numberArrayValue')) {
+    if (value.numberArrayValue) {
         return value.numberArrayValue ? value.numberArrayValue.values : [];
     }
-    if (value.kind === 'boolValue' || Object.hasOwnProperty.call(value, 'boolValue')) {
+    if (value.boolValue) {
         return value.boolValue;
     }
-    if (value.kind === 'stringArrayValue' || Object.hasOwnProperty.call(value, 'stringArrayValue')) {
+    if (value.stringArrayValue) {
         return value.stringArrayValue ? value.stringArrayValue.values : [];
     }
     return undefined;
+}
+
+function decodeFields(fields) {
+    const result = {};
+    for (const field of fields || []) {
+        result[field.key] = decodeValue(field.value);
+    }
+    return result;
 }
 
 function decodeProgramMapping(mapping) {
     if (!mapping) {
         return undefined;
     }
-    if (mapping.val === 'dynVal' || Object.hasOwnProperty.call(mapping, 'dynVal')) {
+    if (mapping.dynVal) {
         return { value: regl.prop(mapping.dynVal), textureProp: null };
     }
-    if (mapping.val === 'dynTextval' || Object.hasOwnProperty.call(mapping, 'dynTextval')) {
+    if (mapping.dynTextval) {
         return {
             value: regl.prop(mapping.dynTextval),
             textureProp: mapping.dynTextval
         };
     }
-    if (mapping.val === 'staticVal' || Object.hasOwnProperty.call(mapping, 'staticVal')) {
+    if (mapping.staticVal) {
         return {
-            value: decodeProgramStaticValue(mapping.staticVal),
+            value: decodeValue(mapping.staticVal),
             textureProp: null
         };
     }
@@ -979,28 +988,20 @@ function getFreePalette() {
     return userConfig.fboNum - 1;
 }
 
-function drawSingleCommand(v) {
-    if (!v || v._c == undefined) {
+function drawAtomic(a) {
+    if (!a) {
         return;
     }
-    // v is a command
-    if (v._c == 0) { // Render commands
-        const p = loadedPrograms[v._p];
-        execProg(p, v);
-    } else if (v._c == 1) {
-        // REGL commands
-        if (v._n == "clear") {
-            const a = v.color[3];
-            v.color[0] *= a;
-            v.color[1] *= a;
-            v.color[2] *= a;
-            regl.clear(v);
-        } else {
-            throw new Error("Unknown REGL command: " + v._n);
-        }
+    v = decodeFields(a.fields);
+    if (a.program == "clear") {
+        const ac = v.color[3];
+        v.color[0] *= ac;
+        v.color[1] *= ac;
+        v.color[2] *= ac;
+        regl.clear(v);
     } else {
-        console.log(v);
-        throw new Error("drawSingleCommand: Unknown command type: " + v._c);
+        const p = loadedPrograms[a.program];
+        execProg(p, v);
     }
 }
 
@@ -1013,18 +1014,21 @@ function execProg(p, va) {
     }
 }
 
+
 function drawComp(v) {
     // v is a composition command
     // Return the id of the palette used
     if (!v) {
         return -1;
     }
-    const r1pid = drawCmd(v.r1);
-    const r2pid = drawCmd(v.r2);
+    const r1pid = drawCmd(v.left);
+    const r2pid = drawCmd(v.right);
     const npid = getFreePalette();
+    const comp = v.compositor;
+    const v = decodeFields(comp.fields);
     palettes[npid]({}, () => {
         regl.clear({ color: [0, 0, 0, 0] });
-        const p = loadedPrograms[v._p];
+        const p = loadedPrograms[comp.program];
         v.t1 = fbos[r1pid];
         v.t2 = fbos[r2pid];
         execProg(p, v);
@@ -1058,76 +1062,64 @@ function freePID(pid) {
 function applyEffect(e, pid) {
     // Return the id of the palette used
     const npid = getFreePalette();
+    const v = decodeFields(e.fields);
     palettes[npid]({}, () => {
         regl.clear({ color: [0, 0, 0, 0] });
-        const p = loadedPrograms[e._p];
-        e.texture = fbos[pid];
-        execProg(p, e);
+        const p = loadedPrograms[e.program];
+        v.texture = fbos[pid];
+        execProg(p, v);
     });
     return npid;
 }
 
+// Draw a group of renderables
+// prev is the palette id of the current palette
+// Return the id of the palette used
 function drawGroup(v, prev) {
-    // v is a group command
-    // Return the id of the palette used
-
     // Callee-save camera
     let prev_camera = camera;
 
     if (!v) {
         return prev;
     }
-
-    // Special optimization
-
-    const cmds = v.c;
-    const effects = v.e;
+    const cmds = v.children;
+    const effects = v.effects;
 
     if (cmds.length == 0) {
         return prev;
     }
 
-    if (v._sc) {
-        // Set camera
-        camera = v._sc;
+    if (v.camera) {
+        camera = [v.camera.x, v.camera.y, v.camera.zoom, v.camera.rotation];
     }
-
     let curPalette = prev;
-
     for (let i = 0; i < cmds.length; i++) {
         const c = cmds[i];
         if (!c) {
             continue;
         }
         let pid = -1;
-        if (c._c == 2) {
-            // Group
-            if (c.e.length == 0) {
-                pid = drawGroup(c, curPalette);
+        if (c.group) {
+            if (c.group.effects.length == 0) {
+                pid = drawGroup(c.group, curPalette);
             } else {
-                pid = drawGroup(c, -1);
+                pid = drawGroup(c.group, -1);
             }
-            if (pid < 0) {
+            if (pid < 0) { // Empty group
                 continue;
             }
-        } else if (c._c == 3) {
-            // Composite
-            pid = drawComp(c);
-            if (pid < 0) {
+        } else if (c.composite) {
+            pid = drawComp(c.composite);
+            if (pid < 0) { // Empty composition
                 continue;
-            }
-        } else if (c._c == 4) {
-            // SaveAsTexture
-            if (curPalette >= 0) {
-                loadedTextures[c._n] = fbos[curPalette];
             }
         } else {
-            // Other Single Commands
+            // Atomic
             pid = curPalette >= 0 ? curPalette : getFreePalette();
             // console.log("draw single command:", pid);
             palettes[pid]({}, () => {
-                if (curPalette < 0 && c._c != 1) {
-                    // Automatically clear the palette
+                if (curPalette < 0) {
+                    // New palette, automatically clear the palette
                     regl.clear({ color: [0, 0, 0, 0] });
                 }
                 while (i < cmds.length) {
@@ -1136,23 +1128,21 @@ function drawGroup(v, prev) {
                         i++;
                         continue;
                     }
-                    if (lc._c == 2 || lc._c == 3) {
+                    if (lc.group || lc.composite) {
                         i--;
                         break;
                     } else {
-                        drawSingleCommand(lc);
+                        drawAtomic(lc.atomic);
                     }
                     i++;
                 }
             });
-
         }
-        // const tmpold = curPalette;
         curPalette = simpleCompose(curPalette, pid);
-        // console.log("simple compose:", tmpold, pid, " -> ", curPalette);
     }
 
     // Apply effects
+
     for (let i = 0; i < effects.length; i++) {
         const e = effects[i];
         const npid = applyEffect(e, curPalette);
@@ -1165,26 +1155,23 @@ function drawGroup(v, prev) {
     return curPalette;
 }
 
-function drawCmd(v) {
-    if (!v) {
+// Draw renderable, return the id of the palette used
+function drawRenderable(rd) {
+    if (!rd) {
         return -1;
     }
-    if (v._c == 0 || v._c == 1) {
+    if (rd.atomic) {
         const pid = getFreePalette();
         palettes[pid]({}, () => {
-            if (v._c != 1) {
-                // Automatically clear the palette
-                regl.clear({ color: [0, 0, 0, 0] });
-            }
-            drawSingleCommand(v);
+            regl.clear({ color: [0, 0, 0, 0] });
+            drawAtomic(rd.atomic);
         });
         return pid;
-    } else if (v._c == 2) {
-        return drawGroup(v, -1);
-    } else if (v._c == 3) {
-        return drawComp(v);
+    } else if (rd.group) {
+        return drawGroup(rd.group, -1);
     } else {
-        throw new Error("drawCmd: Unknown command: " + v._c);
+        // composite
+        return drawComp(rd.composite);
     }
 }
 
@@ -1221,7 +1208,7 @@ async function step() {
         }
 
         // console.log(gview);
-        const pid = drawCmd(gview);
+        const pid = drawRenderable(RenderablePb.decode(gview));
         if (pid >= 0) {
             drawPalette({ fbo: fbos[pid] });
         }
