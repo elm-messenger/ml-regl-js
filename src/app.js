@@ -768,29 +768,17 @@ const programs = {
 
 function loadTextureREGL(texture_name, opts, w, h) {
     loadedTextures[texture_name] = regl.texture(opts);
-    if (MlApp && MlApp.recvREGLCmdPb) {
-        MlApp.recvREGLCmdPb(
-            BackendEventPb.encode(
-                BackendEventPb.create({
-                    textureLoaded: {
-                        name: texture_name,
-                        width: w,
-                        height: h,
-                    },
-                })
-            ).finish()
-        );
-    } else {
-        const response = {
-            texture: texture_name,
-            width: w,
-            height: h
-        }
-        MlApp.recvREGLCmd({
-            _c: "loadTexture",
-            response
-        });
-    }
+    MlApp.recvREGLCmdPb(
+        BackendEventPb.encode(
+            BackendEventPb.create({
+                textureLoaded: {
+                    name: texture_name,
+                    width: w,
+                    height: h,
+                },
+            })
+        ).finish()
+    );
 }
 
 function loadTexture(texture_name, opts) {
@@ -815,83 +803,129 @@ function loadTexture(texture_name, opts) {
     }
 }
 
-
-function createGLProgram(prog_name, program) {
-
+function decodeProgramStaticValue(value) {
+    if (!value) {
+        return undefined;
+    }
+    if (value.kind === 'numberValue' || Object.hasOwnProperty.call(value, 'numberValue')) {
+        return value.numberValue;
+    }
+    if (value.kind === 'stringValue' || Object.hasOwnProperty.call(value, 'stringValue')) {
+        return value.stringValue;
+    }
+    if (value.kind === 'numberArrayValue' || Object.hasOwnProperty.call(value, 'numberArrayValue')) {
+        return value.numberArrayValue ? value.numberArrayValue.values : [];
+    }
+    if (value.kind === 'boolValue' || Object.hasOwnProperty.call(value, 'boolValue')) {
+        return value.boolValue;
+    }
+    if (value.kind === 'stringArrayValue' || Object.hasOwnProperty.call(value, 'stringArrayValue')) {
+        return value.stringArrayValue ? value.stringArrayValue.values : [];
+    }
+    return undefined;
 }
 
-function createGLProgramold(prog_name, proto) {
+function decodeProgramMapping(mapping) {
+    if (!mapping) {
+        return undefined;
+    }
+    if (mapping.val === 'dynVal' || Object.hasOwnProperty.call(mapping, 'dynVal')) {
+        return { value: regl.prop(mapping.dynVal), textureProp: null };
+    }
+    if (mapping.val === 'dynTextval' || Object.hasOwnProperty.call(mapping, 'dynTextval')) {
+        return {
+            value: regl.prop(mapping.dynTextval),
+            textureProp: mapping.dynTextval
+        };
+    }
+    if (mapping.val === 'staticVal' || Object.hasOwnProperty.call(mapping, 'staticVal')) {
+        return {
+            value: decodeProgramStaticValue(mapping.staticVal),
+            textureProp: null
+        };
+    }
+    return undefined;
+}
+
+
+function createGLProgram(prog_name, program) {
     if (loadedPrograms[prog_name]) {
         throw new Error("Program already exists: " + prog_name);
     }
-    // console.log("Creating program: " + prog_name);
-    const uniforms = proto.uniforms != undefined ? proto.uniforms : {};
-    const attributes = proto.attributes != undefined ? proto.attributes : {};
-    const uniformTextureKeys = proto.uniformsDynTexture != undefined ? Object.keys(proto.uniformsDynTexture) : [];
-    const initfunc = (x) => {
-        for (let i = 0; i < uniformTextureKeys.length; i++) {
-            const key = uniformTextureKeys[i];
-            if (key in x) {
-                if (!(x[key] in loadedTextures)) {
-                    return null;
-                }
-                x[key] = loadedTextures[x[key]];
+
+    const uniforms = {};
+    const attributes = {};
+    const texturePropNames = [];
+
+    for (const mapping of program.uniforms || []) {
+        if (!mapping || !mapping.key) {
+            continue;
+        }
+        const resolved = decodeProgramMapping(mapping);
+        if (!resolved) {
+            continue;
+        }
+        uniforms[mapping.key] = resolved.value;
+        if (resolved.textureProp) {
+            texturePropNames.push(resolved.textureProp);
+        }
+    }
+
+    for (const mapping of program.attributes || []) {
+        if (!mapping || !mapping.key) {
+            continue;
+        }
+        const resolved = decodeProgramMapping(mapping);
+        if (!resolved) {
+            continue;
+        }
+        attributes[mapping.key] = resolved.value;
+    }
+
+    const primitive = decodeProgramMapping(program.primitive);
+    const elements = decodeProgramMapping(program.elements);
+    const count = decodeProgramMapping(program.count);
+
+    const initfunc = (args) => {
+        for (let i = 0; i < texturePropNames.length; i++) {
+            const propName = texturePropNames[i];
+            if (!(propName in args)) {
+                continue;
             }
+            if (!(args[propName] in loadedTextures)) {
+                return null;
+            }
+            args[propName] = loadedTextures[args[propName]];
         }
-        return x;
+        return args;
+    };
+
+    const reglProgramConfig = {
+        frag: program.frag,
+        vert: program.vert
+    };
+    reglProgramConfig.attributes = attributes;
+    reglProgramConfig.uniforms = uniforms;
+    if (primitive) {
+        reglProgramConfig.primitive = primitive.value;
     }
-    if (proto.uniformsDyn) {
-        for (const key of Object.keys(proto.uniformsDyn)) {
-            uniforms[key] = regl.prop(proto.uniformsDyn[key]);
-        }
+    if (elements) {
+        reglProgramConfig.elements = elements.value;
     }
-    if (proto.uniformsDynTexture) {
-        for (const key of Object.keys(proto.uniformsDynTexture)) {
-            uniforms[key] = regl.prop(proto.uniformsDynTexture[key]);
-        }
+    if (count) {
+        reglProgramConfig.count = count.value;
     }
-    if (proto.attributesDyn) {
-        for (const key of Object.keys(proto.attributesDyn)) {
-            attributes[key] = regl.prop(proto.attributesDyn[key]);
-        }
-    }
-    if (proto.elementsDyn) {
-        proto.elements = regl.prop(proto.elementsDyn);
-    }
-    if (proto.primitiveDyn) {
-        proto.primitive = regl.prop(proto.primitiveDyn);
-    }
-    if (proto.countDyn) {
-        proto.count = regl.prop(proto.countDyn);
-    }
-    const genP = {
-        frag: proto.frag,
-        vert: proto.vert
-    }
-    if (proto.attributes) {
-        genP.attributes = attributes;
-    }
-    if (proto.count) {
-        genP.count = proto.count;
-    }
-    if (proto.elements) {
-        genP.elements = proto.elements;
-    }
-    if (proto.uniforms) {
-        genP.uniforms = uniforms;
-    }
-    if (proto.primitive) {
-        genP.primitive = proto.primitive;
-    }
-    const program = regl(genP);
-    loadedPrograms[prog_name] = [initfunc, program];
-    const response = {
-        name: prog_name
-    }
-    MlApp.recvREGLCmd({
-        _c: "createGLProgram",
-        response
-    });
+
+    const compiledProgram = regl(reglProgramConfig);
+    loadedPrograms[prog_name] = [initfunc, compiledProgram];
+
+    MlApp.recvREGLCmdPb(
+        BackendEventPb.encode(
+            BackendEventPb.create({
+                programCreated: { name: prog_name },
+            })
+        ).finish()
+    );
 }
 
 function allocNewFBO() {
@@ -1303,23 +1337,13 @@ function config(c) {
 
 async function loadFont(v) {
     await TextManager.loadFont(v.name, v.imageUrl, v.jsonUrl);
-    if (MlApp && MlApp.recvREGLCmdPb) {
-        MlApp.recvREGLCmdPb(
-            BackendEventPb.encode(
-                BackendEventPb.create({
-                    fontLoaded: { name: v.name },
-                })
-            ).finish()
-        );
-    } else {
-        const response = {
-            font: v.name
-        }
-        MlApp.recvREGLCmd({
-            _c: "loadFont",
-            response
-        });
-    }
+    MlApp.recvREGLCmdPb(
+        BackendEventPb.encode(
+            BackendEventPb.create({
+                fontLoaded: { name: v.name },
+            })
+        ).finish()
+    );
 }
 
 function magOptionToString(v) {
