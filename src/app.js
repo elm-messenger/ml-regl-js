@@ -325,7 +325,7 @@ const textbox = () => [
             x["width"] = Infinity;
         }
         const tmap = TextManager.getTexFromFont(x);
-        if (tmap == null) {
+        if (tmap === null) {
             return null;
         }
         const res = TextManager.makeText(x);
@@ -808,19 +808,19 @@ function decodeValue(value) {
     if (!value) {
         return undefined;
     }
-    if (value.numberValue) {
+    if (value.numberValue != null) {
         return value.numberValue;
     }
-    if (value.stringValue) {
+    if (value.stringValue != null) {
         return value.stringValue;
     }
-    if (value.numberArrayValue) {
+    if (value.numberArrayValue != null) {
         return value.numberArrayValue ? value.numberArrayValue.values : [];
     }
-    if (value.boolValue) {
+    if (value.boolValue != null) {
         return value.boolValue;
     }
-    if (value.stringArrayValue) {
+    if (value.stringArrayValue != null) {
         return value.stringArrayValue ? value.stringArrayValue.values : [];
     }
     return undefined;
@@ -829,19 +829,19 @@ function decodeValue(value) {
 function decodeFields(fields) {
     const result = {};
     for (const field of fields || []) {
-        result[field.key] = decodeValue(field.value);
+        result[field.key] = decodeValue(field.val);
     }
     return result;
 }
 
 function decodeProgramValue(value) {
-    if (value.dynVal) {
+    if (value.dynVal != null) {
         return regl.prop(value.dynVal);
     }
-    if (value.staticVal) {
+    if (value.staticVal != null) {
         return decodeValue(value.staticVal);
     }
-    if (value.dynTextval) {
+    if (value.dynTextval != null) {
         return regl.prop(value.dynTextval);
     }
     return undefined;
@@ -991,7 +991,7 @@ function drawAtomic(a) {
         return;
     }
     v = decodeFields(a.fields);
-    if (a.program == "clear") {
+    if (a.program === "clear") {
         const ac = v.color[3];
         v.color[0] *= ac;
         v.color[1] *= ac;
@@ -1037,10 +1037,10 @@ function drawComp(v) {
 }
 
 function simpleCompose(oldp, newp) {
-    if (oldp == -1) {
+    if (oldp === -1) {
         return newp;
     }
-    if (oldp == newp) {
+    if (oldp === newp) {
         return oldp;
     }
     palettes[oldp]({}, () => {
@@ -1083,7 +1083,7 @@ function drawGroup(v, prev) {
     const cmds = v.children;
     const effects = v.effects;
 
-    if (cmds.length == 0) {
+    if (cmds.length === 0) {
         return prev;
     }
 
@@ -1098,7 +1098,7 @@ function drawGroup(v, prev) {
         }
         let pid = -1;
         if (c.group) {
-            if (c.group.effects.length == 0) {
+            if (c.group.effects.length === 0) {
                 pid = drawGroup(c.group, curPalette);
             } else {
                 pid = drawGroup(c.group, -1);
@@ -1201,14 +1201,14 @@ async function step() {
         // const t2 = performance.now();
         // console.log("Time to update: " + (t2 - t1) + "ms");
 
-        const gview = MlApp.view();
+        const gview = RenderablePb.decode(MlApp.view());
 
         for (let i = 0; i < userConfig.fboNum; i++) {
             freePalette[i] = true;
         }
 
         // console.log(gview);
-        const pid = drawRenderable(RenderablePb.decode(gview));
+        const pid = drawRenderable(gview);
         if (pid >= 0) {
             drawPalette({ fbo: fbos[pid] });
         }
@@ -1223,18 +1223,19 @@ async function step() {
 
 async function start(v) {
     // const t0 = performance.now();
-    if (v.virtWidth) {
+    if (v.virtWidth != null) {
         userConfig.virtWidth = v.virtWidth;
     }
-    if (v.virtHeight) {
+    if (v.virtHeight != null) {
         userConfig.virtHeight = v.virtHeight;
     }
-    if (v.fboNum) {
+    if (v.fboNum != null) {
         userConfig.fboNum = v.fboNum;
     }
     let toloadprograms = Object.keys(programs);
-    if (v.builtinPrograms) {
-        toloadprograms = v.builtinPrograms;
+
+    if (v.builtinPrograms != null) {
+        toloadprograms = v.builtinPrograms.values;
     }
 
     // Init
