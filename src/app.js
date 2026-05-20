@@ -889,9 +889,9 @@ function createGLProgram(prog_name, program) {
         attributes[mapping.key] = resolved.value;
     }
 
-    const primitive = decodeProgramValue(program.primitive);
-    const elements = decodeProgramValue(program.elements);
-    const count = decodeProgramValue(program.count);
+    const primitive = program.primitive != null ? decodeProgramValue(program.primitive) : undefined;
+    const elements = program.elements != null ? decodeProgramValue(program.elements) : undefined;
+    const count = program.count != null ? decodeProgramValue(program.count) : undefined;
 
     const initfunc = (args) => {
         for (let i = 0; i < texturePropNames.length; i++) {
@@ -1019,8 +1019,8 @@ function drawComp(v) {
     if (!v) {
         return -1;
     }
-    const r1pid = drawCmd(v.left);
-    const r2pid = drawCmd(v.right);
+    const r1pid = drawRenderable(v.left);
+    const r2pid = drawRenderable(v.right);
     const npid = getFreePalette();
     const comp = v.compositor;
     const vo = decodeFields(comp.fields);
@@ -1361,9 +1361,9 @@ function execCmdPb(bytes) {
         const commands = batch.commands || [];
         for (let i = 0; i < commands.length; i++) {
             const cmd = commands[i];
-            if (cmd.loadFont) {
+            if (cmd.loadFont != null) {
                 loadFont(cmd.loadFont);
-            } else if (cmd.loadTexture) {
+            } else if (cmd.loadTexture != null) {
                 const opts = {
                     data: cmd.loadTexture.url,
                     mag: magOptionToString(
@@ -1377,18 +1377,18 @@ function execCmdPb(bytes) {
                             : 0
                     ),
                 };
-                if (cmd.loadTexture.options && cmd.loadTexture.options.crop) {
+                if (cmd.loadTexture.options != null && cmd.loadTexture.options.crop != null) {
                     const c = cmd.loadTexture.options.crop;
                     opts.subimg = [c.x, c.y, c.width, c.height];
                 }
                 loadTexture(cmd.loadTexture.name, opts);
             } else if (cmd.configRegl != null) {
                 config({ interval: cmd.configRegl.intervalMs });
-            } else if (cmd.startRegl) {
+            } else if (cmd.startRegl != null) {
                 start(cmd.startRegl);
-            } else if (cmd.createProgram) {
-                createGLProgram(cmd.createProgram.name, cmd.program);
-            } else if (cmd.loadAudio) {
+            } else if (cmd.createProgram != null) {
+                createGLProgram(cmd.createProgram.name, cmd.createProgram.program);
+            } else if (cmd.loadAudio != null) {
                 AudioRuntime.loadAudio(cmd.loadAudio.audioUrl);
             } else {
                 throw new Error('Unknown protobuf backend command');
