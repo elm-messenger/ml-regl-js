@@ -800,7 +800,15 @@ function loadTexture(texture_name, opts) {
         }
     }
     image.onerror = () => {
-        throw new Error("Error loading texture: " + image.src);
+        MlApp.recvREGLCmdPb(
+            BackendEventPb.encode(
+                BackendEventPb.create({
+                    textureLoadfail: {
+                        name: texture_name,
+                    },
+                })
+            ).finish()
+        );
     }
 }
 
@@ -1324,14 +1332,24 @@ function config(c) {
 }
 
 async function loadFont(v) {
-    await TextManager.loadFont(v.name, v.imageUrl, v.jsonUrl);
-    MlApp.recvREGLCmdPb(
-        BackendEventPb.encode(
-            BackendEventPb.create({
-                fontLoaded: { name: v.name },
-            })
-        ).finish()
-    );
+    try {
+        await TextManager.loadFont(v.name, v.imageUrl, v.jsonUrl);
+        MlApp.recvREGLCmdPb(
+            BackendEventPb.encode(
+                BackendEventPb.create({
+                    fontLoaded: { name: v.name },
+                })
+            ).finish()
+        );
+    } catch (e) {
+        MlApp.recvREGLCmdPb(
+            BackendEventPb.encode(
+                BackendEventPb.create({
+                    fontLoadfail: { name: v.name },
+                })
+            ).finish()
+        );
+    }
 }
 
 function magOptionToString(v) {
@@ -1387,7 +1405,17 @@ function execCmdPb(bytes) {
             } else if (cmd.startRegl != null) {
                 start(cmd.startRegl);
             } else if (cmd.createProgram != null) {
-                createGLProgram(cmd.createProgram.name, cmd.createProgram.program);
+                try {
+                    createGLProgram(cmd.createProgram.name, cmd.createProgram.program);
+                } catch (_) {
+                    MlApp.recvREGLCmdPb(
+                        BackendEventPb.encode(
+                            BackendEventPb.create({
+                                programCreatefail: { name: cmd.createProgram.name },
+                            })
+                        ).finish()
+                    );
+                }
             } else if (cmd.loadAudio != null) {
                 AudioRuntime.loadAudio(cmd.loadAudio.audioUrl);
             } else {
