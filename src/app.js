@@ -8,6 +8,7 @@ const BackendCommandBatchPb =
     pb.mlregl.transport.backend.BackendCommandBatch;
 const BackendEventPb = pb.mlregl.transport.backend.BackendEvent;
 const RenderablePb = pb.mlregl.transport.render.Renderable;
+const EventPb = pb.mlregl.transport.backend.Event;
 
 const loadedPrograms = {};
 
@@ -1323,6 +1324,53 @@ function init(canvas, app, override_conf) {
     regl = require('regl')(defconfig);
     TextManager = new TM(regl);
     AudioRuntime = makeAudioRuntime(MlApp, pb);
+
+    // Add event listener
+    document.addEventListener('keydown', (e) => {
+        MlApp.event(
+            EventPb.encode(
+                EventPb.create({
+                    keyDown: { code: e.key },
+                })
+            ).finish()
+        );
+    });
+    document.addEventListener('keyup', (e) => {
+        MlApp.event(
+            EventPb.encode(
+                EventPb.create({
+                    keyUp: { code: e.key },
+                })
+            ).finish()
+        );
+    });
+    document.addEventListener('mousemove', (e) => {
+        MlApp.event(
+            EventPb.encode(
+                EventPb.create({
+                    mouseMove: { x: e.clientX, y: e.clientY },
+                })
+            ).finish()
+        );
+    });
+    document.addEventListener('mousedown', (e) => {
+        MlApp.event(
+            EventPb.encode(
+                EventPb.create({
+                    mouseDown: { x: e.clientX, y: e.clientY },
+                })
+            ).finish()
+        );
+    });
+    document.addEventListener('mouseup', (e) => {
+        MlApp.event(
+            EventPb.encode(
+                EventPb.create({
+                    mouseUp: { x: e.clientX, y: e.clientY },
+                })
+            ).finish()
+        );
+    });
 }
 
 function config(c) {
