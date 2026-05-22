@@ -1449,9 +1449,22 @@ function execCmdPb(bytes) {
                 }
                 loadTexture(cmd.loadTexture.name, opts);
             } else if (cmd.configRegl != null) {
-                config({ interval: cmd.configRegl.intervalMs });
+                // ConfigRegl is a oneof: either pacing (intervalMs) or
+                // window flags. The JS host doesn't own the run loop
+                // and can't natively change resizable / fullscreen
+                // without a fresh canvas + container hookup, so window
+                // flags are a no-op here. Pacing maps to the existing
+                // `interval` knob.
+                if (cmd.configRegl.intervalMs != null) {
+                    config({ interval: cmd.configRegl.intervalMs });
+                }
+                // window-config oneof branch silently ignored.
             } else if (cmd.startRegl != null) {
                 start(cmd.startRegl);
+            } else if (cmd.quitRegl != null) {
+                // The JS host doesn't own the run loop (the browser
+                // does, via requestAnimationFrame), so QuitRegl is a
+                // no-op here. The native backend handles it.
             } else if (cmd.createProgram != null) {
                 try {
                     createGLProgram(cmd.createProgram.name, cmd.createProgram.program);
