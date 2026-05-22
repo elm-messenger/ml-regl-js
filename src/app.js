@@ -14,6 +14,86 @@ const loadedPrograms = {};
 
 const loadedTextures = {};
 
+// Browser-key -> SDL_GetKeyName mapping. The desktop bridge calls
+// SDL_GetKeyName(ev.key.key) when encoding KeyboardEvent.code, so the OCaml
+// app sees the SDL naming on desktop. To keep the JS backend identical, we
+// translate the browser KeyboardEvent.code (layout-independent, e.g. "KeyA",
+// "ArrowLeft", "ShiftLeft") into the same SDL names here. Anything missing
+// falls through as the raw e.code with a console.warn — that surfaces gaps
+// during development rather than silently disagreeing with the desktop host.
+const DOM_CODE_TO_SDL_KEY_NAME = (() => {
+    const m = {
+        // Letters: "KeyA" -> "A" .. "KeyZ" -> "Z"
+        // Digits:  "Digit0" -> "0" .. "Digit9" -> "9"
+        // (filled in below in a loop)
+        Space: 'Space',
+        Enter: 'Return',
+        NumpadEnter: 'Return',
+        Escape: 'Escape',
+        Tab: 'Tab',
+        Backspace: 'Backspace',
+        Delete: 'Delete',
+        Insert: 'Insert',
+        Home: 'Home',
+        End: 'End',
+        PageUp: 'PageUp',
+        PageDown: 'PageDown',
+        ArrowUp: 'Up',
+        ArrowDown: 'Down',
+        ArrowLeft: 'Left',
+        ArrowRight: 'Right',
+        ShiftLeft: 'Left Shift',
+        ShiftRight: 'Right Shift',
+        ControlLeft: 'Left Ctrl',
+        ControlRight: 'Right Ctrl',
+        AltLeft: 'Left Alt',
+        AltRight: 'Right Alt',
+        MetaLeft: 'Left GUI',
+        MetaRight: 'Right GUI',
+        CapsLock: 'CapsLock',
+        Minus: '-',
+        Equal: '=',
+        BracketLeft: '[',
+        BracketRight: ']',
+        Backslash: '\\',
+        Semicolon: ';',
+        Quote: "'",
+        Backquote: '`',
+        Comma: ',',
+        Period: '.',
+        Slash: '/',
+    };
+    for (let i = 0; i < 26; i++) {
+        m['Key' + String.fromCharCode(65 + i)] = String.fromCharCode(65 + i);
+    }
+    for (let i = 0; i < 10; i++) {
+        m['Digit' + i] = String(i);
+    }
+    for (let i = 1; i <= 12; i++) {
+        m['F' + i] = 'F' + i;
+    }
+    return m;
+})();
+
+const _warnedUnknownKeyCodes = {};
+function domCodeToSdlKeyName(domCode) {
+    const name = DOM_CODE_TO_SDL_KEY_NAME[domCode];
+    if (name !== undefined) return name;
+    if (!_warnedUnknownKeyCodes[domCode]) {
+        _warnedUnknownKeyCodes[domCode] = true;
+        console.warn(
+            "ml-regl: no SDL keycode mapping for browser code '" + domCode +
+            "'; passing through as-is. Add to DOM_CODE_TO_SDL_KEY_NAME if needed.");
+    }
+    return domCode;
+}
+
+// Browser MouseEvent.button uses 0=left/1=middle/2=right/3=back/4=forward,
+// while SDL uses 1=left/2=middle/3=right/4=x1/5=x2 (SDL_BUTTON_*). The
+// desktop bridge ships ev.button.button straight through, so OCaml apps see
+// the SDL convention. Match it on the JS side by adding 1.
+function domButtonToSdlButton(b) { return b + 1; }
+
 let TextManager = null;
 
 let MlApp = null;
@@ -1336,7 +1416,7 @@ function init(canvas, app, override_conf) {
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    keyDown: { code: e.key },
+                    keyDown: { code: domCodeToSdlKeyName(e.code) },
                 })
             ).finish()
         );
@@ -1345,7 +1425,7 @@ function init(canvas, app, override_conf) {
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    keyUp: { code: e.key },
+                    keyUp: { code: domCodeToSdlKeyName(e.code) },
                 })
             ).finish()
         );
@@ -1363,7 +1443,7 @@ function init(canvas, app, override_conf) {
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    mouseDown: { button: e.button, x: e.clientX, y: e.clientY },
+                    mouseDown: { button: domButtonToSdlButton(e.button), x: e.clientX, y: e.clientY },
                 })
             ).finish()
         );
@@ -1372,7 +1452,7 @@ function init(canvas, app, override_conf) {
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    mouseUp: { button: e.button, x: e.clientX, y: e.clientY },
+                    mouseUp: { button: domButtonToSdlButton(e.button), x: e.clientX, y: e.clientY },
                 })
             ).finish()
         );
