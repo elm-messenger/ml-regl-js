@@ -1206,7 +1206,13 @@ async function step() {
 
         const ts = browserSupportNow ? navigationStartTime + window.performance.now() : Date.now();
 
-        MlApp.update(ts);
+        MlApp.event(
+            EventPb.encode(
+                EventPb.create({
+                    updateTick: { ts: ts },
+                })
+            ).finish()
+        );
         // const t2 = performance.now();
         // console.log("Time to update: " + (t2 - t1) + "ms");
 
@@ -1357,7 +1363,7 @@ function init(canvas, app, override_conf) {
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    mouseDown: { x: e.clientX, y: e.clientY },
+                    mouseDown: { button: e.button, x: e.clientX, y: e.clientY },
                 })
             ).finish()
         );
@@ -1366,7 +1372,7 @@ function init(canvas, app, override_conf) {
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    mouseUp: { x: e.clientX, y: e.clientY },
+                    mouseUp: { button: e.button, x: e.clientX, y: e.clientY },
                 })
             ).finish()
         );
