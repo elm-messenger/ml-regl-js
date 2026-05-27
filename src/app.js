@@ -1341,10 +1341,6 @@ async function start(v) {
     // Set camera initial value
     camera = [userConfig.virtWidth / 2, userConfig.virtHeight / 2, 1.0, 0.0];
 
-
-    // Load arial font
-    await TextManager.init();
-
     for (let i = 0; i < userConfig.fboNum; i++) {
         allocNewFBO();
     }
