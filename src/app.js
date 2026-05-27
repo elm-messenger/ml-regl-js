@@ -120,13 +120,21 @@ let freePalette = [];
 
 let drawPalette = null;
 
-let browserSupportNow = (
-    window.performance &&
-    window.performance.now &&
-    window.performance.timeOrigin
-);
+let loopStartTimeMs = null;
 
-let navigationStartTime = browserSupportNow ? window.performance.timeOrigin : 0;
+function monotonicNowMs() {
+    if (window.performance && window.performance.now) {
+        return window.performance.now();
+    }
+    return Date.now();
+}
+
+function loopElapsedMs() {
+    if (loopStartTimeMs == null) {
+        return 0;
+    }
+    return monotonicNowMs() - loopStartTimeMs;
+}
 
 const frags = {
     "palette": readFileSync('src/palette/frag.glsl', 'utf8'),
@@ -1284,7 +1292,7 @@ async function step() {
 
         // const t1 = performance.now();
 
-        const ts = browserSupportNow ? navigationStartTime + window.performance.now() : Date.now();
+        const ts = loopElapsedMs();
 
         MlApp.event(
             EventPb.encode(
@@ -1367,6 +1375,8 @@ async function start(v) {
         count: 6
     });
 
+    loopStartTimeMs = monotonicNowMs();
+
     // const t1 = performance.now();
     // console.log("REGL initialized in " + (t1 - t0) + "ms");
     requestAnimationFrame(step);
@@ -1405,7 +1415,7 @@ function init(canvas, app, override_conf) {
     }
     regl = require('regl')(defconfig);
     TextManager = new TM(regl);
-    AudioRuntime = makeAudioRuntime(MlApp, pb);
+    AudioRuntime = makeAudioRuntime(MlApp, pb, loopElapsedMs);
 
     // Add event listener
     document.addEventListener('keydown', (e) => {

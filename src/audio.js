@@ -4,8 +4,8 @@
 // Public surface (called from app.js / OCaml):
 //   AudioRuntime.execAudioCmdPb(Uint8Array)
 //
-// Times are absolute milliseconds (matching the OCaml Tick/`Date.now()`
-// scale). Loop start/end and start_at are durations in milliseconds.
+// Times use the backend's update-tick clock: milliseconds elapsed since the
+// app loop started. Loop start/end and start_at are durations in milliseconds.
 
 let AudioCommandBatchPb = null;
 let AudioBackendEventPb = null;
@@ -100,7 +100,7 @@ function encodeAudioBackendEventPb(msg) {
     return AudioBackendEventPb.encode(AudioBackendEventPb.create(msg)).finish();
 }
 
-function makeAudioRuntime(MlApp, pb) {
+function makeAudioRuntime(MlApp, pb, nowMs) {
     AudioCommandBatchPb = pb.mlregl.transport.audio.AudioCommandBatch;
     AudioBackendEventPb = pb.mlregl.transport.audio.AudioBackendEvent;
     AudioLoadErrorPb = pb.mlregl.transport.audio.AudioLoadError;
@@ -371,7 +371,7 @@ function makeAudioRuntime(MlApp, pb) {
         if (context && context.state === "suspended") {
             context.resume();
         }
-        const now = Date.now();
+        const now = nowMs ? nowMs() : Date.now();
         const actions = payload.actions || [];
         for (let i = 0; i < actions.length; i++) {
             applyAction(actions[i], now);
