@@ -1507,6 +1507,58 @@ function minOptionToString(v) {
     }
 }
 
+function sendBackendEvent(event) {
+    MlApp.recvREGLCmdPb(
+        BackendEventPb.encode(BackendEventPb.create(event)).finish()
+    );
+}
+
+function handleSaveValue(v) {
+    try {
+        globalThis.localStorage.setItem(v.key, v.value);
+    } catch (e) {
+        console.warn('[ml-regl] SaveValue failed for key', v.key, e);
+    }
+}
+
+function handleReadValue(v) {
+    try {
+        const value = globalThis.localStorage.getItem(v.key);
+        if (value === null) {
+            sendBackendEvent({ valueReadMissing: { key: v.key } });
+        } else {
+            sendBackendEvent({ valueRead: { key: v.key, value } });
+        }
+    } catch (e) {
+        console.warn('[ml-regl] ReadValue failed for key', v.key, e);
+        sendBackendEvent({ valueReadMissing: { key: v.key } });
+    }
+}
+
+async function handleLoadFile(v) {
+    try {
+        const res = await fetch(v.path);
+        if (!res.ok) {
+            sendBackendEvent({
+                fileLoadFailed: {
+                    path: v.path,
+                    reason: `HTTP ${res.status} ${res.statusText}`,
+                },
+            });
+            return;
+        }
+        const data = await res.text();
+        sendBackendEvent({ fileLoaded: { path: v.path, data } });
+    } catch (e) {
+        sendBackendEvent({
+            fileLoadFailed: {
+                path: v.path,
+                reason: String(e && e.message ? e.message : e),
+            },
+        });
+    }
+}
+
 function execCmdPb(bytes) {
     try {
         const batch = BackendCommandBatchPb.decode(bytes);
@@ -1565,6 +1617,12 @@ function execCmdPb(bytes) {
                 }
             } else if (cmd.loadAudio != null) {
                 AudioRuntime.loadAudio(cmd.loadAudio.audioUrl);
+            } else if (cmd.saveValue != null) {
+                handleSaveValue(cmd.saveValue);
+            } else if (cmd.readValue != null) {
+                handleReadValue(cmd.readValue);
+            } else if (cmd.loadFile != null) {
+                handleLoadFile(cmd.loadFile);
             } else {
                 throw new Error('Unknown protobuf backend command');
             }
