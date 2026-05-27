@@ -110,6 +110,9 @@ function makeAudioRuntime(MlApp, pb, nowMs) {
         console.warn("Web Audio API not supported");
         return {
             execAudioCmdPb: () => { },
+            loadAudio: () => { },
+            unloadAudio: () => { },
+            shutdown: () => { },
             resume: () => { },
         };
     }
@@ -117,6 +120,8 @@ function makeAudioRuntime(MlApp, pb, nowMs) {
     let context = null;
     /** @type {AudioBuffer[]} */
     const audioBuffers = [];
+    /** @type {{ [url: string]: number }} */
+    const audioUrlToBufferId = {};
     /** @type {{ [k: number]: { bufferId: number; nodes: { sourceNode: AudioBufferSourceNode; gainNode: GainNode; volumeAtGainNodes: GainNode[] } } }} */
     const audioPlaying = {};
 
@@ -271,6 +276,7 @@ function makeAudioRuntime(MlApp, pb, nowMs) {
             const decoded = await context.decodeAudioData(buf);
             const bufferId = audioBuffers.length;
             audioBuffers.push(decoded);
+            audioUrlToBufferId[audiourl] = bufferId;
             MlApp.recvAudioMsgPb(
                 encodeAudioBackendEventPb({
                     audioLoadSuccess: {
@@ -293,16 +299,41 @@ function makeAudioRuntime(MlApp, pb, nowMs) {
         }
     }
 
+    function stopPlayingEntry(nodeGroupId, entry) {
+        delete audioPlaying[nodeGroupId];
+        try {
+            entry.nodes.sourceNode.stop();
+        } catch (_e) {
+            // stop() throws if the source was already stopped; unload should be
+            // idempotent just like the desktop backend.
+        }
+        entry.nodes.sourceNode.disconnect();
+        entry.nodes.gainNode.disconnect();
+        entry.nodes.volumeAtGainNodes.forEach((n) => n.disconnect());
+    }
+
+    function unloadAudio(audiourl) {
+        const bufferId = audioUrlToBufferId[audiourl];
+        if (bufferId == null) {
+            return;
+        }
+        delete audioUrlToBufferId[audiourl];
+        audioBuffers[bufferId] = null;
+
+        for (const nodeGroupId of Object.keys(audioPlaying)) {
+            const entry = audioPlaying[nodeGroupId];
+            if (entry && entry.bufferId === bufferId) {
+                stopPlayingEntry(nodeGroupId, entry);
+            }
+        }
+    }
+
     function applyAction(a, now) {
         switch (a.action) {
             case "stopSound": {
                 const v = audioPlaying[a.nodeGroupId];
                 if (!v) return;
-                delete audioPlaying[a.nodeGroupId];
-                v.nodes.sourceNode.stop();
-                v.nodes.sourceNode.disconnect();
-                v.nodes.gainNode.disconnect();
-                v.nodes.volumeAtGainNodes.forEach((n) => n.disconnect());
+                stopPlayingEntry(a.nodeGroupId, v);
                 return;
             }
             case "setVolume": {
@@ -382,7 +413,21 @@ function makeAudioRuntime(MlApp, pb, nowMs) {
         applyAudioCommandBatch(decodeAudioCommandBatch(bytes));
     }
 
-    return { execAudioCmdPb, loadAudio };
+    function shutdown() {
+        for (const nodeGroupId of Object.keys(audioPlaying)) {
+            stopPlayingEntry(nodeGroupId, audioPlaying[nodeGroupId]);
+        }
+        audioBuffers.length = 0;
+        for (const audioUrl of Object.keys(audioUrlToBufferId)) {
+            delete audioUrlToBufferId[audioUrl];
+        }
+        if (context) {
+            context.close();
+            context = null;
+        }
+    }
+
+    return { execAudioCmdPb, loadAudio, unloadAudio, shutdown };
 }
 
 module.exports = makeAudioRuntime;

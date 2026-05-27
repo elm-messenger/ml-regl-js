@@ -39,6 +39,36 @@ function FontManager(regl) {
         }
     }
 
+    function unloadFont(name, expectedTexture = null) {
+        const font = loadedFonts[name];
+        if (!font) {
+            return;
+        }
+        if (expectedTexture !== null && font.texture !== expectedTexture) {
+            return;
+        }
+        const textureName = font.texture;
+        delete loadedFonts[name];
+
+        // Text geometry caches are keyed by text/options and can outlive the
+        // font entry. Drop them so a later reload recreates geometry against
+        // the current font metrics.
+        fontCache = {};
+        fontCache_old = {};
+
+        for (const otherName in loadedFonts) {
+            if (loadedFonts[otherName].texture === textureName) {
+                return;
+            }
+        }
+
+        const texture = loadedTexture[textureName];
+        if (texture && typeof texture.destroy === "function") {
+            texture.destroy();
+        }
+        delete loadedTexture[textureName];
+    }
+
     function getTexFromFont(opts) {
         let textName = null;
         for (const f of opts.fonts) {
@@ -330,6 +360,7 @@ function FontManager(regl) {
     }
 
     this.loadFont = loadFont;
+    this.unloadFont = unloadFont;
     this.getTexFromFont = getTexFromFont;
     this.getFont = getFont;
     this.makeText = makeText;

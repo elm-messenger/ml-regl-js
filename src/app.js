@@ -13,6 +13,8 @@ const EventPb = pb.mlregl.transport.backend.Event;
 const loadedPrograms = {};
 
 const loadedTextures = {};
+const textureLoadTokens = {};
+const fontLoadTokens = {};
 
 // Browser-key -> SDL_GetKeyName mapping. The desktop bridge calls
 // SDL_GetKeyName(ev.key.key) when encoding KeyboardEvent.code, so the OCaml
@@ -121,6 +123,9 @@ let freePalette = [];
 let drawPalette = null;
 
 let loopStartTimeMs = null;
+let loopStopRequested = false;
+let pendingAnimationFrameId = null;
+let pendingTimeoutId = null;
 
 function monotonicNowMs() {
     if (window.performance && window.performance.now) {
@@ -134,6 +139,38 @@ function loopElapsedMs() {
         return 0;
     }
     return monotonicNowMs() - loopStartTimeMs;
+}
+
+function scheduleNextStep() {
+    if (loopStopRequested) {
+        return;
+    }
+    if (userConfig.interval > 0) {
+        pendingTimeoutId = setTimeout(() => {
+            pendingTimeoutId = null;
+            step();
+        }, userConfig.interval);
+    } else {
+        pendingAnimationFrameId = requestAnimationFrame(() => {
+            pendingAnimationFrameId = null;
+            step();
+        });
+    }
+}
+
+function requestQuit() {
+    loopStopRequested = true;
+    if (pendingAnimationFrameId != null) {
+        cancelAnimationFrame(pendingAnimationFrameId);
+        pendingAnimationFrameId = null;
+    }
+    if (pendingTimeoutId != null) {
+        clearTimeout(pendingTimeoutId);
+        pendingTimeoutId = null;
+    }
+    if (AudioRuntime && AudioRuntime.shutdown) {
+        AudioRuntime.shutdown();
+    }
 }
 
 const frags = {
@@ -856,7 +893,14 @@ const programs = {
     imgFade,
 }
 
-function loadTextureREGL(texture_name, opts, w, h) {
+function loadTextureREGL(texture_name, opts, w, h, token) {
+    if (textureLoadTokens[texture_name] !== token) {
+        if (opts.data && typeof opts.data.close === "function") {
+            opts.data.close();
+        }
+        return;
+    }
+    unloadTexture(texture_name, { keepToken: true });
     loadedTextures[texture_name] = regl.texture(opts);
     MlApp.recvREGLCmdPb(
         BackendEventPb.encode(
@@ -873,22 +917,34 @@ function loadTextureREGL(texture_name, opts, w, h) {
 
 function loadTexture(texture_name, opts) {
     // Initialize textures
+    const token = (textureLoadTokens[texture_name] || 0) + 1;
+    textureLoadTokens[texture_name] = token;
     const image = new Image();
     image.src = opts.data;
     image.onload = () => {
+        if (textureLoadTokens[texture_name] !== token) {
+            return;
+        }
         if (opts["subimg"]) {
             const subimg = opts["subimg"];
             createImageBitmap(image, subimg[0], subimg[1], subimg[2], subimg[3], { imageOrientation: "flipY", premultiplyAlpha: 'none' }).then((sp) => {
+                if (textureLoadTokens[texture_name] !== token) {
+                    sp.close();
+                    return;
+                }
                 opts.data = sp;
-                loadTextureREGL(texture_name, opts, subimg[2], subimg[3]);
+                loadTextureREGL(texture_name, opts, subimg[2], subimg[3], token);
             })
         } else {
             opts.data = image;
             opts.flipY = true;
-            loadTextureREGL(texture_name, opts, image.width, image.height);
+            loadTextureREGL(texture_name, opts, image.width, image.height, token);
         }
     }
     image.onerror = () => {
+        if (textureLoadTokens[texture_name] !== token) {
+            return;
+        }
         MlApp.recvREGLCmdPb(
             BackendEventPb.encode(
                 BackendEventPb.create({
@@ -898,6 +954,17 @@ function loadTexture(texture_name, opts) {
                 })
             ).finish()
         );
+    }
+}
+
+function unloadTexture(texture_name, options = {}) {
+    const texture = loadedTextures[texture_name];
+    if (texture && typeof texture.destroy === "function") {
+        texture.destroy();
+    }
+    delete loadedTextures[texture_name];
+    if (!options.keepToken) {
+        textureLoadTokens[texture_name] = (textureLoadTokens[texture_name] || 0) + 1;
     }
 }
 
@@ -1271,17 +1338,12 @@ function drawRenderable(rd) {
 }
 
 async function step() {
-    if (global_error) {
+    if (global_error || loopStopRequested) {
         return;
     }
 
     try {
-        if (userConfig.interval > 0) {
-            // Call step in interval
-            setTimeout(step, userConfig.interval);
-        } else {
-            requestAnimationFrame(step);
-        }
+        scheduleNextStep();
         regl.poll();
         const vpWidth = regl._gl.drawingBufferWidth;
         const vpHeight = regl._gl.drawingBufferHeight;
@@ -1326,6 +1388,7 @@ async function step() {
 
 async function start(v) {
     // const t0 = performance.now();
+    loopStopRequested = false;
     if (v.virtWidth != null) {
         userConfig.virtWidth = v.virtWidth;
     }
@@ -1379,7 +1442,7 @@ async function start(v) {
 
     // const t1 = performance.now();
     // console.log("REGL initialized in " + (t1 - t0) + "ms");
-    requestAnimationFrame(step);
+    scheduleNextStep();
 }
 
 function loadGLProgram(prog_name, f) {
@@ -1472,8 +1535,14 @@ function config(c) {
 }
 
 async function loadFont(v) {
+    const token = (fontLoadTokens[v.name] || 0) + 1;
+    fontLoadTokens[v.name] = token;
     try {
         await TextManager.loadFont(v.name, v.imageUrl, v.jsonUrl);
+        if (fontLoadTokens[v.name] !== token) {
+            TextManager.unloadFont(v.name, v.imageUrl);
+            return;
+        }
         MlApp.recvREGLCmdPb(
             BackendEventPb.encode(
                 BackendEventPb.create({
@@ -1490,6 +1559,11 @@ async function loadFont(v) {
             ).finish()
         );
     }
+}
+
+function unloadFont(name) {
+    fontLoadTokens[name] = (fontLoadTokens[name] || 0) + 1;
+    TextManager.unloadFont(name);
 }
 
 function magOptionToString(v) {
@@ -1606,9 +1680,7 @@ function execCmdPb(bytes) {
             } else if (cmd.startRegl != null) {
                 start(cmd.startRegl);
             } else if (cmd.quitRegl != null) {
-                // The JS host doesn't own the run loop (the browser
-                // does, via requestAnimationFrame), so QuitRegl is a
-                // no-op here. The native backend handles it.
+                requestQuit();
             } else if (cmd.createProgram != null) {
                 try {
                     createGLProgram(cmd.createProgram.name, cmd.createProgram.program);
@@ -1623,6 +1695,12 @@ function execCmdPb(bytes) {
                 }
             } else if (cmd.loadAudio != null) {
                 AudioRuntime.loadAudio(cmd.loadAudio.audioUrl);
+            } else if (cmd.unloadTexture != null) {
+                unloadTexture(cmd.unloadTexture.name);
+            } else if (cmd.unloadFont != null) {
+                unloadFont(cmd.unloadFont.name);
+            } else if (cmd.unloadAudio != null) {
+                AudioRuntime.unloadAudio(cmd.unloadAudio.audioUrl);
             } else if (cmd.saveValue != null) {
                 handleSaveValue(cmd.saveValue);
             } else if (cmd.readValue != null) {
@@ -1630,7 +1708,7 @@ function execCmdPb(bytes) {
             } else if (cmd.loadFile != null) {
                 handleLoadFile(cmd.loadFile);
             } else {
-                throw new Error('Unknown protobuf backend command');
+                throw new Error('Unknown protobuf backend command ' + cmd.kind);
             }
         }
     } catch (e) {
