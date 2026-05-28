@@ -1480,6 +1480,21 @@ function init(canvas, app, override_conf) {
     TextManager = new TM(regl);
     AudioRuntime = makeAudioRuntime(MlApp, pb, loopElapsedMs);
 
+    // Convert a DOM mouse event to virtual canvas coordinates, mirroring
+    // the desktop bridge's mouse_to_virtual: raw * (virtual / actual).
+    // Raw input is canvas-relative (clientX/Y minus the canvas bounding rect).
+    function mouseEventToVirtual(e) {
+        const rect = canvas.getBoundingClientRect();
+        const cw = rect.width || canvas.clientWidth || canvas.width || 1;
+        const ch = rect.height || canvas.clientHeight || canvas.height || 1;
+        const localX = e.clientX - rect.left;
+        const localY = e.clientY - rect.top;
+        return {
+            x: localX * (userConfig.virtWidth / cw),
+            y: localY * (userConfig.virtHeight / ch),
+        };
+    }
+
     // Add event listener
     document.addEventListener('keydown', (e) => {
         MlApp.event(
@@ -1500,28 +1515,31 @@ function init(canvas, app, override_conf) {
         );
     });
     document.addEventListener('mousemove', (e) => {
+        const p = mouseEventToVirtual(e);
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    mouseMove: { x: e.clientX, y: e.clientY },
+                    mouseMove: { x: p.x, y: p.y },
                 })
             ).finish()
         );
     });
     document.addEventListener('mousedown', (e) => {
+        const p = mouseEventToVirtual(e);
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    mouseDown: { button: domButtonToSdlButton(e.button), x: e.clientX, y: e.clientY },
+                    mouseDown: { button: domButtonToSdlButton(e.button), x: p.x, y: p.y },
                 })
             ).finish()
         );
     });
     document.addEventListener('mouseup', (e) => {
+        const p = mouseEventToVirtual(e);
         MlApp.event(
             EventPb.encode(
                 EventPb.create({
-                    mouseUp: { button: domButtonToSdlButton(e.button), x: e.clientX, y: e.clientY },
+                    mouseUp: { button: domButtonToSdlButton(e.button), x: p.x, y: p.y },
                 })
             ).finish()
         );
