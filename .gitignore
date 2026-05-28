@@ -3,3 +3,4 @@ dist/
 .parcel-cache/
 build/
 /src/generated
+.DS_Store

@@ -7,10 +7,7 @@ GENERATED_PROTO_JS := $(GENERATED_DIR)/mlregl_pb.js
 $(GENERATED_DIR):
 	mkdir -p $(GENERATED_DIR)
 
-$(PROTO_DIR):
-	mkdir -p $(PROTO_DIR)
-
-proto-gen: $(PROTO_FILES)
+proto-gen: $(PROTO_FILES) $(GENERATED_DIR)
 	pnpm exec pbjs -t static-module -w commonjs --dependency protobufjs/minimal --force-number -o $(GENERATED_PROTO_JS) $(PROTO_FILES)
 
 debug: proto-gen
