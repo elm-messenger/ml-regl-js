@@ -1685,16 +1685,14 @@ function execCmdPb(bytes) {
                 }
                 loadTexture(cmd.loadTexture.name, opts);
             } else if (cmd.configRegl != null) {
-                // ConfigRegl is a oneof: either pacing (intervalMs) or
-                // window flags. The JS host doesn't own the run loop
-                // and can't natively change resizable / fullscreen
-                // without a fresh canvas + container hookup, so window
-                // flags are a no-op here. Pacing maps to the existing
-                // `interval` knob.
+                // ConfigRegl is a oneof. Pacing maps to the existing
+                // `interval` knob. Window flags and maxAssetsPerFrame are
+                // no-ops in JS: the browser host does not have the desktop
+                // GL-thread asset drain cap.
                 if (cmd.configRegl.intervalMs != null) {
                     config({ interval: cmd.configRegl.intervalMs });
                 }
-                // window-config oneof branch silently ignored.
+                // window / maxAssetsPerFrame branches silently ignored.
             } else if (cmd.startRegl != null) {
                 start(cmd.startRegl);
             } else if (cmd.quitRegl != null) {
