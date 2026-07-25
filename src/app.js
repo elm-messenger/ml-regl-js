@@ -173,6 +173,24 @@ function requestQuit() {
     }
 }
 
+function defaultAlpha(x) {
+    if (x["alpha"] == null) {
+        x["alpha"] = 1.0;
+    }
+}
+
+function textureLoadFail(texture_name) {
+    MlApp.recvREGLCmdPb(
+        BackendEventPb.encode(
+            BackendEventPb.create({
+                textureLoadfail: {
+                    name: texture_name,
+                },
+            })
+        ).finish()
+    );
+}
+
 const frags = {
     "palette": readFileSync('src/palette/frag.glsl', 'utf8'),
     "triangle": readFileSync('src/triangle/frag.glsl', 'utf8'),
@@ -297,9 +315,7 @@ const poly = () => [
 const texture = () => [
     (x) => {
         const src = x["texture"];
-        if (!x["alpha"]) {
-            x["alpha"] = 1.0;
-        }
+        defaultAlpha(x);
         if (!loadedTextures[src]) {
             return null;
         }
@@ -331,9 +347,7 @@ const texture = () => [
 
 const textureCropped = () => [
     (x) => {
-        if (!x["alpha"]) {
-            x["alpha"] = 1.0;
-        }
+        defaultAlpha(x);
         const src = x["texture"];
         if (!loadedTextures[src]) {
             return null;
@@ -361,9 +375,7 @@ const textureCropped = () => [
 
 const centeredTexture = () => [
     (x) => {
-        if (!x["alpha"]) {
-            x["alpha"] = 1.0;
-        }
+        defaultAlpha(x);
         const src = x["texture"];
         if (!loadedTextures[src]) {
             return null;
@@ -397,9 +409,7 @@ const centeredTexture = () => [
 
 const centeredCroppedTexture = () => [
     (x) => {
-        if (!x["alpha"]) {
-            x["alpha"] = 1.0;
-        }
+        defaultAlpha(x);
         const src = x["texture"];
         if (!loadedTextures[src]) {
             return null;
@@ -934,6 +944,11 @@ function loadTexture(texture_name, opts) {
                 }
                 opts.data = sp;
                 loadTextureREGL(texture_name, opts, subimg[2], subimg[3], token);
+            }).catch(() => {
+                if (textureLoadTokens[texture_name] !== token) {
+                    return;
+                }
+                textureLoadFail(texture_name);
             })
         } else {
             opts.data = image;
@@ -945,15 +960,7 @@ function loadTexture(texture_name, opts) {
         if (textureLoadTokens[texture_name] !== token) {
             return;
         }
-        MlApp.recvREGLCmdPb(
-            BackendEventPb.encode(
-                BackendEventPb.create({
-                    textureLoadfail: {
-                        name: texture_name,
-                    },
-                })
-            ).finish()
-        );
+        textureLoadFail(texture_name);
     }
 }
 
@@ -1154,7 +1161,7 @@ function drawAtomic(a) {
     if (!a) {
         return;
     }
-    v = decodeFields(a.fields);
+    const v = decodeFields(a.fields);
     if (a.program === "clear") {
         const ac = v.color[3];
         v.color[0] *= ac;
@@ -1163,16 +1170,17 @@ function drawAtomic(a) {
         regl.clear(v);
     } else {
         const p = loadedPrograms[a.program];
-        execProg(p, v);
+        execProg(p, v, a.program);
     }
 }
 
-function execProg(p, va) {
-    if (p) {
-        const args = p[0](va);
-        if (args) {
-            p[1](args);
-        }
+function execProg(p, va, programName) {
+    if (!p) {
+        throw new Error("Program not loaded: " + programName);
+    }
+    const args = p[0](va);
+    if (args) {
+        p[1](args);
     }
 }
 
@@ -1185,6 +1193,11 @@ function drawComp(v) {
     }
     const r1pid = drawRenderable(v.left);
     const r2pid = drawRenderable(v.right);
+    if (r1pid < 0 || r2pid < 0) {
+        freePID(r1pid);
+        freePID(r2pid);
+        return -1;
+    }
     const npid = getFreePalette();
     const comp = v.compositor;
     const vo = decodeFields(comp.fields);
@@ -1193,7 +1206,7 @@ function drawComp(v) {
         const p = loadedPrograms[comp.program];
         vo.t1 = fbos[r1pid];
         vo.t2 = fbos[r2pid];
-        execProg(p, vo);
+        execProg(p, vo, comp.program);
     });
     freePID(r1pid);
     freePID(r2pid);
@@ -1203,6 +1216,9 @@ function drawComp(v) {
 function simpleCompose(oldp, newp) {
     if (oldp === -1) {
         return newp;
+    }
+    if (newp === -1) {
+        return oldp;
     }
     if (oldp === newp) {
         return oldp;
@@ -1223,13 +1239,16 @@ function freePID(pid) {
 
 function applyEffect(e, pid) {
     // Return the id of the palette used
+    if (pid < 0) {
+        return -1;
+    }
     const npid = getFreePalette();
     const v = decodeFields(e.fields);
     palettes[npid]({}, () => {
         regl.clear({ color: [0, 0, 0, 0] });
         const p = loadedPrograms[e.program];
         v.texture = fbos[pid];
-        execProg(p, v);
+        execProg(p, v, e.program);
     });
     return npid;
 }
@@ -1405,7 +1424,7 @@ async function start(v) {
     }
 
     // Init
-    for (prog_name of toloadprograms) {
+    for (const prog_name of toloadprograms) {
         loadBuiltinGLProgram(prog_name);
     }
 
