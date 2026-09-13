@@ -127,6 +127,180 @@ let loopStopRequested = false;
 let pendingAnimationFrameId = null;
 let pendingTimeoutId = null;
 
+// Optional JSON control channel. The URL is accepted from a query parameter
+// or fragment so it is never sent as an HTTP Referer. Commands are queued and
+// applied from the render loop, preserving the same frame-boundary semantics
+// as the native host.
+let controlSocket = null;
+let controlCommands = [];
+let controlPaused = false;
+let controlStepBudget = 0;
+let controlTimeMs = null;
+let controlDtMs = 16.6666667;
+let controlFrameNumber = 0;
+let latestRenderTree = null;
+let latestPublishedState = null;
+let recentControlLogs = [];
+
+function controlUrlFromLocation() {
+    try {
+        const search = new URLSearchParams(window.location.search || '');
+        const direct = search.get('control') || search.get('mcp');
+        if (direct && (direct.startsWith('ws://') || direct.startsWith('wss://'))) {
+            return direct;
+        }
+        const hash = (window.location.hash || '').replace(/^#/, '');
+        for (const part of hash.split('&')) {
+            const equal = part.indexOf('=');
+            if (equal < 0) continue;
+            const key = decodeURIComponent(part.slice(0, equal));
+            const value = decodeURIComponent(part.slice(equal + 1));
+            if ((key === 'mcp' || key === 'control') &&
+                (value.startsWith('ws://') || value.startsWith('wss://'))) {
+                return value;
+            }
+        }
+    } catch (_) { /* malformed URL: leave the channel disabled */ }
+    return null;
+}
+
+function sendControl(message) {
+    if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+        controlSocket.send(JSON.stringify(message));
+    }
+}
+
+function sendControlResponse(command, ok, payload) {
+    sendControl({ type: 'response', id: command.id == null ? null : command.id,
+        ok: ok, [ok ? 'result' : 'error']: payload });
+}
+
+function startControlSocket() {
+    const url = controlUrlFromLocation();
+    if (!url || typeof WebSocket === 'undefined' || controlSocket) return;
+    try {
+        controlSocket = new WebSocket(url);
+        controlSocket.onopen = () => sendControl({ type: 'hello', protocol: 1,
+            runtime: 'ml-regl-browser', capabilities: ['pause', 'resume', 'quit',
+                'step', 'set_time', 'get_state', 'get_render_tree',
+                'screenshot', 'input'] });
+        controlSocket.onmessage = (event) => {
+            try { controlCommands.push(JSON.parse(event.data)); }
+            catch (_) { console.warn('ml-regl: invalid control JSON'); }
+        };
+        controlSocket.onclose = () => { controlSocket = null; };
+        controlSocket.onerror = () => { /* reconnect on next init if needed */ };
+    } catch (_) { controlSocket = null; }
+}
+
+function renderTreeForControl(tree) {
+    if (!tree) return null;
+    try { return RenderablePb.toObject(tree, { defaults: true }); }
+    catch (_) { return tree; }
+}
+
+function injectControlInput(params) {
+    const kind = params.kind;
+    let event = null;
+    if (kind === 'key_down' || kind === 'key_up') {
+        event = {}; event[kind === 'key_down' ? 'keyDown' : 'keyUp'] = { code: params.code || '' };
+    } else if (kind === 'mouse_down' || kind === 'mouse_up') {
+        event = {}; event[kind === 'mouse_down' ? 'mouseDown' : 'mouseUp'] = {
+            button: params.button == null ? 1 : params.button,
+            x: params.x || 0, y: params.y || 0,
+        };
+    } else if (kind === 'mouse_move') {
+        event = { mouseMove: { x: params.x || 0, y: params.y || 0 } };
+    }
+    if (event) MlApp.event(EventPb.encode(EventPb.create(event)).finish());
+    return !!event;
+}
+
+function processControlCommands() {
+    const commands = controlCommands.splice(0);
+    for (const command of commands) {
+        const method = command.method || command.command;
+        const params = command.params || {};
+        if (method === 'pause') {
+            controlPaused = true; sendControlResponse(command, true, { paused: true });
+        } else if (method === 'resume') {
+            controlPaused = false; controlStepBudget = 0;
+            sendControlResponse(command, true, { paused: false });
+        } else if (method === 'quit') {
+            requestQuit(); sendControlResponse(command, true, { quit: true });
+        } else if (method === 'step') {
+            controlPaused = true;
+            if (controlTimeMs == null) controlTimeMs = 0;
+            const requestedFrames = Number(params.frames || 1);
+            controlStepBudget += Math.min(100000,
+                Math.max(1, Number.isFinite(requestedFrames) ? Math.floor(requestedFrames) : 1));
+            if (params.dt_ms != null) controlDtMs = Number(params.dt_ms);
+            sendControlResponse(command, true, { queued: controlStepBudget });
+        } else if (method === 'set_time') {
+            controlTimeMs = Number(params.ms || 0);
+            sendControlResponse(command, true, { time_ms: controlTimeMs });
+        } else if (method === 'get_state') {
+            sendControlResponse(command, true, { paused: controlPaused,
+                frame: controlFrameNumber, time_ms: controlTimeMs,
+                published: latestPublishedState, logs: recentControlLogs });
+        } else if (method === 'get_render_tree') {
+            sendControlResponse(command, true, { available: !!latestRenderTree,
+                tree: renderTreeForControl(latestRenderTree) });
+        } else if (method === 'screenshot') {
+            try {
+                const canvas = regl && regl._gl && regl._gl.canvas;
+                const data = canvas && canvas.toDataURL ? canvas.toDataURL('image/png') : null;
+                sendControlResponse(command, !!data, data ? { data_url: data } : { message: 'screenshot failed' });
+            } catch (_) { sendControlResponse(command, false, { message: 'screenshot failed' }); }
+        } else if (method === 'input') {
+            const delivered = injectControlInput(params);
+            sendControlResponse(command, delivered, delivered ? { delivered: true } : { message: 'unknown input kind' });
+        } else if (method) {
+            sendControlResponse(command, false, { message: 'unknown method' });
+        } else {
+            sendControlResponse(command, false, { message: 'missing method' });
+        }
+    }
+}
+
+// Debug mode is deliberately opt-in. The URL fragment is accepted so an MCP
+// token/control URL is not sent as an HTTP Referer.
+function debugEnabledFromLocation() {
+    try {
+        const search = new URLSearchParams(window.location.search || '');
+        if (search.get('debug') === '1' || search.get('mcp') === '1' ||
+            search.get('control') != null ||
+            (search.get('mcp') || '').startsWith('ws://') ||
+            (search.get('mcp') || '').startsWith('wss://')) {
+            return true;
+        }
+        const hash = window.location.hash || '';
+        return hash.includes('debug=1') || hash.includes('mcp=');
+    } catch (_) {
+        return false;
+    }
+}
+
+function emitDebug(event) {
+    if (!debugEnabledFromLocation() || !event) {
+        return;
+    }
+    const prefix = event.kind === 'state' ? 'MCP_STATE' : 'MCP_LOG';
+    startControlSocket();
+    if (event.kind === 'state') {
+        console.log(prefix + ' ' + event.payload);
+        let state = event.payload;
+        try { state = JSON.parse(event.payload); } catch (_) { /* keep text */ }
+        latestPublishedState = state;
+        sendControl({ type: 'state', state: state });
+    } else {
+        console.log(prefix + ' ' + event.level + ' ' + event.payload);
+        recentControlLogs.push(event.payload);
+        if (recentControlLogs.length > 64) recentControlLogs.shift();
+        sendControl({ type: 'log', level: event.level, message: event.payload });
+    }
+}
+
 function monotonicNowMs() {
     if (window.performance && window.performance.now) {
         return window.performance.now();
@@ -1363,6 +1537,11 @@ async function step() {
 
     try {
         scheduleNextStep();
+        processControlCommands();
+        if (controlPaused && controlStepBudget === 0) {
+            return;
+        }
+        if (controlStepBudget > 0) controlStepBudget -= 1;
         regl.poll();
         const vpWidth = regl._gl.drawingBufferWidth;
         const vpHeight = regl._gl.drawingBufferHeight;
@@ -1373,7 +1552,7 @@ async function step() {
 
         // const t1 = performance.now();
 
-        const ts = loopElapsedMs();
+        const ts = controlTimeMs == null ? loopElapsedMs() : controlTimeMs;
 
         MlApp.event(
             EventPb.encode(
@@ -1386,6 +1565,7 @@ async function step() {
         // console.log("Time to update: " + (t2 - t1) + "ms");
 
         const gview = RenderablePb.decode(MlApp.view());
+        latestRenderTree = gview;
 
         for (let i = 0; i < userConfig.fboNum; i++) {
             freePalette[i] = true;
@@ -1399,6 +1579,10 @@ async function step() {
         // const t3 = performance.now();
         // console.log("Time to render view: " + (t3 - t2) + "ms");
         regl._gl.flush();
+        controlFrameNumber += 1;
+        if (controlTimeMs != null) controlTimeMs += controlDtMs;
+        sendControl({ type: 'frame', frame: controlFrameNumber,
+            time_ms: controlTimeMs == null ? loopElapsedMs() : controlTimeMs });
     } catch (e) {
         stopError(e);
     }
@@ -1408,6 +1592,9 @@ async function step() {
 async function start(v) {
     // const t0 = performance.now();
     loopStopRequested = false;
+    startControlSocket();
+    controlFrameNumber = 0;
+    latestRenderTree = null;
     if (v.virtWidth != null) {
         userConfig.virtWidth = v.virtWidth;
     }
@@ -1766,5 +1953,7 @@ globalThis.MlREGL = {
     loadGLProgram, // Called by user
     init, // Called by user
     execCmdPb, // Called from app
-    execAudioCmdPb // Called from app
+    execAudioCmdPb, // Called from app
+    debugEnabled: debugEnabledFromLocation,
+    emitDebug
 }

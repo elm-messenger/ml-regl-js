@@ -19,4 +19,7 @@ build: proto-gen
 	pnpm exec browserify -t brfs src/app.js > build/regl.js
 	pnpm exec uglifyjs build/regl.js -c -m --in-situ
 
-.PHONY: build debug proto-gen sync-proto
+.PHONY: build debug proto-gen sync-proto test-control
+
+test-control:
+	node test/control_protocol.test.js
