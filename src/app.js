@@ -1372,12 +1372,18 @@ function drawComp(v) {
     if (!v) {
         return -1;
     }
-    const r1pid = drawRenderable(v.left);
-    const r2pid = drawRenderable(v.right);
-    if (r1pid < 0 || r2pid < 0) {
-        freePID(r1pid);
-        freePID(r2pid);
+    let r1pid = drawRenderable(v.left);
+    let r2pid = drawRenderable(v.right);
+    if (r1pid < 0 && r2pid < 0) {
         return -1;
+    }
+    // A side that drew nothing (no atomic in it) is a transparent image, as
+    // in the desktop host, so the compositor still sees two inputs.
+    if (r1pid < 0) {
+        r1pid = getClearedPalette();
+    }
+    if (r2pid < 0) {
+        r2pid = getClearedPalette();
     }
     const npid = getFreePalette();
     const comp = v.compositor;
@@ -1392,6 +1398,14 @@ function drawComp(v) {
     freePID(r1pid);
     freePID(r2pid);
     return npid;
+}
+
+function getClearedPalette() {
+    const pid = getFreePalette();
+    palettes[pid]({}, () => {
+        regl.clear({ color: [0, 0, 0, 0] });
+    });
+    return pid;
 }
 
 function simpleCompose(oldp, newp) {
