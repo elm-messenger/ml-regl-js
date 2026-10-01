@@ -1099,7 +1099,10 @@ function loadTextureREGL(texture_name, opts, w, h, token) {
     );
 }
 
-function loadTexture(texture_name, opts) {
+// Textures are uploaded bottom row first (WebGL flipY), which shows the image
+// as it is in the file with ml-regl's texture coordinates; [mirror] (the
+// LoadTexture flip_y option) flips it vertically. Fonts load separately.
+function loadTexture(texture_name, opts, mirror) {
     // Initialize textures
     const token = (textureLoadTokens[texture_name] || 0) + 1;
     textureLoadTokens[texture_name] = token;
@@ -1111,7 +1114,11 @@ function loadTexture(texture_name, opts) {
         }
         if (opts["subimg"]) {
             const subimg = opts["subimg"];
-            createImageBitmap(image, subimg[0], subimg[1], subimg[2], subimg[3], { imageOrientation: "flipY", premultiplyAlpha: 'none' }).then((sp) => {
+            const bitmapOptions = { premultiplyAlpha: 'none' };
+            if (!mirror) {
+                bitmapOptions.imageOrientation = "flipY";
+            }
+            createImageBitmap(image, subimg[0], subimg[1], subimg[2], subimg[3], bitmapOptions).then((sp) => {
                 if (textureLoadTokens[texture_name] !== token) {
                     sp.close();
                     return;
@@ -1126,7 +1133,7 @@ function loadTexture(texture_name, opts) {
             })
         } else {
             opts.data = image;
-            opts.flipY = true;
+            opts.flipY = !mirror;
             loadTextureREGL(texture_name, opts, image.width, image.height, token);
         }
     }
@@ -1898,7 +1905,8 @@ function execCmdPb(bytes) {
                     const c = cmd.loadTexture.options.crop;
                     opts.subimg = [c.x, c.y, c.width, c.height];
                 }
-                loadTexture(cmd.loadTexture.name, opts);
+                const mirror = !!(cmd.loadTexture.options && cmd.loadTexture.options.flipY);
+                loadTexture(cmd.loadTexture.name, opts, mirror);
             } else if (cmd.configRegl != null) {
                 // ConfigRegl is a oneof. Pacing maps to the existing
                 // `interval` knob and the window title to document.title.
