@@ -1589,9 +1589,18 @@ async function step() {
 
 }
 
+// WindowConfig fields shared with the desktop host. Only the title has a
+// browser equivalent; fullscreen / resizable stay no-ops here.
+function applyWindowConfig(w) {
+    if (w != null && w.title != null) {
+        document.title = w.title;
+    }
+}
+
 async function start(v) {
     // const t0 = performance.now();
     loopStopRequested = false;
+    applyWindowConfig(v.window);
     startControlSocket();
     controlFrameNumber = 0;
     latestRenderTree = null;
@@ -1892,13 +1901,14 @@ function execCmdPb(bytes) {
                 loadTexture(cmd.loadTexture.name, opts);
             } else if (cmd.configRegl != null) {
                 // ConfigRegl is a oneof. Pacing maps to the existing
-                // `interval` knob. Window flags and maxAssetsPerFrame are
+                // `interval` knob and the window title to document.title.
+                // The fullscreen / resizable flags and maxAssetsPerFrame are
                 // no-ops in JS: the browser host does not have the desktop
                 // GL-thread asset drain cap.
                 if (cmd.configRegl.intervalMs != null) {
                     config({ interval: cmd.configRegl.intervalMs });
                 }
-                // window / maxAssetsPerFrame branches silently ignored.
+                applyWindowConfig(cmd.configRegl.window);
             } else if (cmd.startRegl != null) {
                 start(cmd.startRegl);
             } else if (cmd.quitRegl != null) {
