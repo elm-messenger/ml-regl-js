@@ -1259,13 +1259,13 @@ function createGLProgram(prog_name, program) {
     reglProgramConfig.attributes = attributes;
     reglProgramConfig.uniforms = uniforms;
     if (primitive) {
-        reglProgramConfig.primitive = primitive.value;
+        reglProgramConfig.primitive = primitive;
     }
     if (elements) {
-        reglProgramConfig.elements = elements.value;
+        reglProgramConfig.elements = elements;
     }
     if (count) {
-        reglProgramConfig.count = count.value;
+        reglProgramConfig.count = count;
     }
 
     const compiledProgram = regl(reglProgramConfig);
