@@ -231,7 +231,9 @@ function processControlCommands() {
             requestQuit(); sendControlResponse(command, true, { quit: true });
         } else if (method === 'step') {
             controlPaused = true;
-            if (controlTimeMs == null) controlTimeMs = 0;
+            // The controlled clock continues from the game's current time,
+            // so ticks never go back.
+            if (controlTimeMs == null) controlTimeMs = loopElapsedMs();
             const requestedFrames = Number(params.frames || 1);
             controlStepBudget += Math.min(100000,
                 Math.max(1, Number.isFinite(requestedFrames) ? Math.floor(requestedFrames) : 1));
