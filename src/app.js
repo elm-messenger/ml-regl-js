@@ -242,7 +242,8 @@ function processControlCommands() {
             sendControlResponse(command, true, { time_ms: controlTimeMs });
         } else if (method === 'get_state') {
             sendControlResponse(command, true, { paused: controlPaused,
-                frame: controlFrameNumber, time_ms: controlTimeMs,
+                frame: controlFrameNumber,
+                time_ms: controlTimeMs == null ? loopElapsedMs() : controlTimeMs,
                 published: latestPublishedState, logs: recentControlLogs });
         } else if (method === 'get_render_tree') {
             sendControlResponse(command, true, { available: !!latestRenderTree,
