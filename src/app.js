@@ -131,7 +131,7 @@ let pendingTimeoutId = null;
 // or fragment so it is never sent as an HTTP Referer. Commands are applied as
 // they arrive, between frames (queued until the loop starts), so they do not
 // wait for an animation frame, which a background tab may not get for a long
-// time.
+// time. Stepped frames run on their own, unthrottled, task queue.
 let controlSocket = null;
 let controlCommands = [];
 let controlPaused = false;
@@ -139,6 +139,8 @@ let controlStepBudget = 0;
 let controlTimeMs = null;
 let controlDtMs = 16.6666667;
 let controlFrameNumber = 0;
+let steppedFramePending = false;
+let steppedFrameChannel = null;
 let latestRenderTree = null;
 let latestPublishedState = null;
 let recentControlLogs = [];
@@ -242,6 +244,7 @@ function processControlCommands() {
                 Math.max(1, Number.isFinite(requestedFrames) ? Math.floor(requestedFrames) : 1));
             if (params.dt_ms != null) controlDtMs = Number(params.dt_ms);
             sendControlResponse(command, true, { queued: controlStepBudget });
+            scheduleSteppedFrame();
         } else if (method === 'set_time') {
             controlTimeMs = Number(params.ms || 0);
             sendControlResponse(command, true, { time_ms: controlTimeMs });
@@ -1662,6 +1665,8 @@ function drawView(view) {
     }
 }
 
+// One loop iteration. A paused game runs no frames here: stepped frames run
+// from runSteppedFrame.
 async function step() {
     if (global_error || loopStopRequested) {
         return;
@@ -1670,35 +1675,8 @@ async function step() {
     try {
         scheduleNextStep();
         processControlCommands();
-        if (controlPaused && controlStepBudget === 0) return;
-        if (controlStepBudget > 0) controlStepBudget -= 1;
-        syncFramebuffers();
-
-        // const t1 = performance.now();
-
-        const ts = controlTimeMs == null ? loopElapsedMs() : controlTimeMs;
-
-        MlApp.event(
-            EventPb.encode(
-                EventPb.create({
-                    updateTick: { ts: ts },
-                })
-            ).finish()
-        );
-        // const t2 = performance.now();
-        // console.log("Time to update: " + (t2 - t1) + "ms");
-
-        const gview = RenderablePb.decode(MlApp.view());
-        latestRenderTree = gview;
-
-        drawView(gview);
-        // const t3 = performance.now();
-        // console.log("Time to render view: " + (t3 - t2) + "ms");
-        regl._gl.flush();
-        controlFrameNumber += 1;
-        if (controlTimeMs != null) controlTimeMs += controlDtMs;
-        sendControl({ type: 'frame', frame: controlFrameNumber,
-            time_ms: controlTimeMs == null ? loopElapsedMs() : controlTimeMs });
+        if (controlPaused) return;
+        runFrame();
     } catch (e) {
         stopError(e);
     }
@@ -1707,6 +1685,56 @@ async function step() {
 
 function loopRunning() {
     return loopStartTimeMs != null && !loopStopRequested && !global_error;
+}
+
+// Stepped frames run one per task from a MessageChannel, which background
+// tabs do not throttle the way they throttle animation frames and timers.
+function scheduleSteppedFrame() {
+    if (steppedFramePending || controlStepBudget === 0 || !loopRunning()) return;
+    if (steppedFrameChannel == null) {
+        steppedFrameChannel = new MessageChannel();
+        steppedFrameChannel.port1.onmessage = runSteppedFrame;
+    }
+    steppedFramePending = true;
+    steppedFrameChannel.port2.postMessage(null);
+}
+
+function runSteppedFrame() {
+    steppedFramePending = false;
+    if (!loopRunning() || !controlPaused || controlStepBudget === 0) return;
+    try {
+        controlStepBudget -= 1;
+        runFrame();
+    } catch (e) {
+        stopError(e);
+        return;
+    }
+    scheduleSteppedFrame();
+}
+
+// Update the model with a tick, draw its view, and report the frame.
+function runFrame() {
+    syncFramebuffers();
+
+    const ts = controlTimeMs == null ? loopElapsedMs() : controlTimeMs;
+
+    MlApp.event(
+        EventPb.encode(
+            EventPb.create({
+                updateTick: { ts: ts },
+            })
+        ).finish()
+    );
+
+    const gview = RenderablePb.decode(MlApp.view());
+    latestRenderTree = gview;
+
+    drawView(gview);
+    regl._gl.flush();
+    controlFrameNumber += 1;
+    if (controlTimeMs != null) controlTimeMs += controlDtMs;
+    sendControl({ type: 'frame', frame: controlFrameNumber,
+        time_ms: controlTimeMs == null ? loopElapsedMs() : controlTimeMs });
 }
 
 // WindowConfig fields shared with the desktop host. Only the title has a
