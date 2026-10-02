@@ -184,7 +184,7 @@ function startControlSocket() {
         controlSocket.onopen = () => sendControl({ type: 'hello', protocol: 1,
             runtime: 'ml-regl-browser', capabilities: ['pause', 'resume', 'quit',
                 'step', 'set_time', 'get_state', 'get_render_tree',
-                'screenshot', 'input'] });
+                'screenshot', 'screenshot_view', 'input'] });
         controlSocket.onmessage = (event) => {
             try { controlCommands.push(JSON.parse(event.data)); }
             catch (_) { console.warn('ml-regl: invalid control JSON'); }
@@ -268,14 +268,81 @@ function processControlCommands() {
 // frame is drawn, in the same task, while the drawing buffer still holds it.
 function answerScreenshots() {
     const commands = pendingScreenshots.splice(0);
-    let data = null;
-    try {
-        const canvas = regl && regl._gl && regl._gl.canvas;
-        data = canvas && canvas.toDataURL ? canvas.toDataURL('image/png') : null;
-    } catch (_) { data = null; }
+    const canvas = regl && regl._gl && regl._gl.canvas;
     for (const command of commands) {
-        sendControlResponse(command, !!data, data ? { data_url: data } : { message: 'screenshot failed' });
+        let result;
+        try {
+            result = captureScreenshot(canvas, command.params || {});
+        } catch (error) {
+            result = { message: (error && error.message) || 'screenshot failed' };
+        }
+        sendControlResponse(command, !!result.data_url, result);
     }
+}
+
+// Crop, scale and encode the canvas as the screenshot params ask. The virtual
+// area fills the whole canvas, so the view is all of it. The image is opaque,
+// as the desktop host's is.
+function captureScreenshot(canvas, params) {
+    if (!canvas || !canvas.toDataURL) throw new Error('screenshot failed');
+    const virtW = userConfig.virtWidth;
+    const virtH = userConfig.virtHeight;
+    const ppuX = canvas.width / virtW;
+    const ppuY = canvas.height / virtH;
+    let crop = { x: 0, y: 0, width: canvas.width, height: canvas.height };
+    const region = params.region;
+    if (region) {
+        if (!(region.width > 0 && region.height > 0)) {
+            throw new Error('region needs a positive width and height');
+        }
+        const clamp = (v, hi) => Math.min(hi, Math.max(0, Math.round(v)));
+        const x0 = clamp(region.x * ppuX, canvas.width);
+        const y0 = clamp(region.y * ppuY, canvas.height);
+        const x1 = clamp((region.x + region.width) * ppuX, canvas.width);
+        const y1 = clamp((region.y + region.height) * ppuY, canvas.height);
+        if (x1 <= x0 || y1 <= y0) throw new Error('the region is outside the view');
+        crop = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    }
+    // Output size: the captured pixels, or the requested size in virtual
+    // units; never up, and at most max_width wide.
+    let tw = crop.width;
+    let th = crop.height;
+    if (params.scale === 'virtual') {
+        tw = region ? region.width : virtW;
+        th = region ? region.height : virtH;
+    }
+    if (tw > crop.width) { th *= crop.width / tw; tw = crop.width; }
+    if (params.max_width > 0 && tw > params.max_width) {
+        th *= params.max_width / tw;
+        tw = params.max_width;
+    }
+    const width = Math.max(1, Math.round(tw));
+    const height = Math.max(1, Math.round(th));
+    const format = params.format || 'png';
+    if (format !== 'png' && format !== 'jpeg' && format !== 'bmp') {
+        throw new Error('unknown screenshot format ' + format);
+    }
+    // Browsers do not encode BMP; it comes back as PNG.
+    const jpeg = format === 'jpeg';
+    const out = document.createElement('canvas');
+    out.width = width;
+    out.height = height;
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, width, height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
+    const quality = Math.min(100, Math.max(1, Number(params.quality) || 90)) / 100;
+    return {
+        data_url: out.toDataURL(jpeg ? 'image/jpeg' : 'image/png', quality),
+        format: jpeg ? 'jpeg' : 'png',
+        width,
+        height,
+        view: { x: 0, y: 0, width: canvas.width, height: canvas.height },
+        virtual: { width: virtW, height: virtH },
+        pixels_per_unit: ppuX * width / crop.width,
+    };
 }
 
 // Debug mode is deliberately opt-in. The URL fragment is accepted so an MCP
