@@ -184,7 +184,7 @@ function startControlSocket() {
         controlSocket.onopen = () => sendControl({ type: 'hello', protocol: 1,
             runtime: 'ml-regl-browser', capabilities: ['pause', 'resume', 'quit',
                 'step', 'set_time', 'get_state', 'get_render_tree',
-                'screenshot', 'screenshot_view', 'input'] });
+                'screenshot', 'input'] });
         controlSocket.onmessage = (event) => {
             try { controlCommands.push(JSON.parse(event.data)); }
             catch (_) { console.warn('ml-regl: invalid control JSON'); }
