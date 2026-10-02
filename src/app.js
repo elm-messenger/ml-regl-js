@@ -128,9 +128,10 @@ let pendingAnimationFrameId = null;
 let pendingTimeoutId = null;
 
 // Optional JSON control channel. The URL is accepted from a query parameter
-// or fragment so it is never sent as an HTTP Referer. Commands are queued and
-// applied from the render loop, preserving the same frame-boundary semantics
-// as the native host.
+// or fragment so it is never sent as an HTTP Referer. Commands are applied as
+// they arrive, between frames (queued until the loop starts), so they do not
+// wait for an animation frame, which a background tab may not get for a long
+// time.
 let controlSocket = null;
 let controlCommands = [];
 let controlPaused = false;
@@ -138,7 +139,6 @@ let controlStepBudget = 0;
 let controlTimeMs = null;
 let controlDtMs = 16.6666667;
 let controlFrameNumber = 0;
-let pendingScreenshots = [];
 let latestRenderTree = null;
 let latestPublishedState = null;
 let recentControlLogs = [];
@@ -187,7 +187,10 @@ function startControlSocket() {
                 'screenshot', 'input'] });
         controlSocket.onmessage = (event) => {
             try { controlCommands.push(JSON.parse(event.data)); }
-            catch (_) { console.warn('ml-regl: invalid control JSON'); }
+            catch (_) { console.warn('ml-regl: invalid control JSON'); return; }
+            if (loopRunning()) {
+                try { processControlCommands(); } catch (e) { stopError(e); }
+            }
         };
         controlSocket.onclose = () => { controlSocket = null; };
         controlSocket.onerror = () => { /* reconnect on next init if needed */ };
@@ -251,7 +254,7 @@ function processControlCommands() {
             sendControlResponse(command, true, { available: !!latestRenderTree,
                 tree: renderTreeForControl(latestRenderTree) });
         } else if (method === 'screenshot') {
-            pendingScreenshots.push(command);
+            answerScreenshot(command);
         } else if (method === 'input') {
             const delivered = injectControlInput(params);
             sendControlResponse(command, delivered, delivered ? { delivered: true } : { message: 'unknown input kind' });
@@ -264,20 +267,22 @@ function processControlCommands() {
 }
 
 // The WebGL context has no preserveDrawingBuffer, so the browser clears the
-// canvas once a frame is composited. Screenshots are answered right after a
-// frame is drawn, in the same task, while the drawing buffer still holds it.
-function answerScreenshots() {
-    const commands = pendingScreenshots.splice(0);
+// canvas once a frame is composited. Draw the latest frame again, without
+// updating the model, and capture it in the same task.
+function answerScreenshot(command) {
     const canvas = regl && regl._gl && regl._gl.canvas;
-    for (const command of commands) {
-        let result;
-        try {
-            result = captureScreenshot(canvas, command.params || {});
-        } catch (error) {
-            result = { message: (error && error.message) || 'screenshot failed' };
+    let result;
+    try {
+        if (latestRenderTree) {
+            syncFramebuffers();
+            drawView(latestRenderTree);
+            regl._gl.flush();
         }
-        sendControlResponse(command, !!result.data_url, result);
+        result = captureScreenshot(canvas, command.params || {});
+    } catch (error) {
+        result = { message: (error && error.message) || 'screenshot failed' };
     }
+    sendControlResponse(command, !!result.data_url, result);
 }
 
 // Crop, scale and encode the canvas as the screenshot params ask. The virtual
@@ -1665,19 +1670,7 @@ async function step() {
     try {
         scheduleNextStep();
         processControlCommands();
-        if (controlPaused && controlStepBudget === 0) {
-            if (pendingScreenshots.length > 0) {
-                // A paused game draws nothing, so redraw the last frame
-                // without updating the model to have something to capture.
-                if (latestRenderTree) {
-                    syncFramebuffers();
-                    drawView(latestRenderTree);
-                    regl._gl.flush();
-                }
-                answerScreenshots();
-            }
-            return;
-        }
+        if (controlPaused && controlStepBudget === 0) return;
         if (controlStepBudget > 0) controlStepBudget -= 1;
         syncFramebuffers();
 
@@ -1702,7 +1695,6 @@ async function step() {
         // const t3 = performance.now();
         // console.log("Time to render view: " + (t3 - t2) + "ms");
         regl._gl.flush();
-        if (pendingScreenshots.length > 0) answerScreenshots();
         controlFrameNumber += 1;
         if (controlTimeMs != null) controlTimeMs += controlDtMs;
         sendControl({ type: 'frame', frame: controlFrameNumber,
@@ -1711,6 +1703,10 @@ async function step() {
         stopError(e);
     }
 
+}
+
+function loopRunning() {
+    return loopStartTimeMs != null && !loopStopRequested && !global_error;
 }
 
 // WindowConfig fields shared with the desktop host. Only the title has a
