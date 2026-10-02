@@ -138,6 +138,7 @@ let controlStepBudget = 0;
 let controlTimeMs = null;
 let controlDtMs = 16.6666667;
 let controlFrameNumber = 0;
+let pendingScreenshots = [];
 let latestRenderTree = null;
 let latestPublishedState = null;
 let recentControlLogs = [];
@@ -247,11 +248,7 @@ function processControlCommands() {
             sendControlResponse(command, true, { available: !!latestRenderTree,
                 tree: renderTreeForControl(latestRenderTree) });
         } else if (method === 'screenshot') {
-            try {
-                const canvas = regl && regl._gl && regl._gl.canvas;
-                const data = canvas && canvas.toDataURL ? canvas.toDataURL('image/png') : null;
-                sendControlResponse(command, !!data, data ? { data_url: data } : { message: 'screenshot failed' });
-            } catch (_) { sendControlResponse(command, false, { message: 'screenshot failed' }); }
+            pendingScreenshots.push(command);
         } else if (method === 'input') {
             const delivered = injectControlInput(params);
             sendControlResponse(command, delivered, delivered ? { delivered: true } : { message: 'unknown input kind' });
@@ -260,6 +257,21 @@ function processControlCommands() {
         } else {
             sendControlResponse(command, false, { message: 'missing method' });
         }
+    }
+}
+
+// The WebGL context has no preserveDrawingBuffer, so the browser clears the
+// canvas once a frame is composited. Screenshots are answered right after a
+// frame is drawn, in the same task, while the drawing buffer still holds it.
+function answerScreenshots() {
+    const commands = pendingScreenshots.splice(0);
+    let data = null;
+    try {
+        const canvas = regl && regl._gl && regl._gl.canvas;
+        data = canvas && canvas.toDataURL ? canvas.toDataURL('image/png') : null;
+    } catch (_) { data = null; }
+    for (const command of commands) {
+        sendControlResponse(command, !!data, data ? { data_url: data } : { message: 'screenshot failed' });
     }
 }
 
@@ -1551,6 +1563,30 @@ function drawRenderable(rd) {
     }
 }
 
+// Match the pooled FBOs to the canvas drawing buffer.
+function syncFramebuffers() {
+    regl.poll();
+    const vpWidth = regl._gl.drawingBufferWidth;
+    const vpHeight = regl._gl.drawingBufferHeight;
+
+    for (let i = 0; i < userConfig.fboNum; i++) {
+        fbos[i].resize(vpWidth, vpHeight);
+    }
+}
+
+// Draw a decoded render tree to the canvas.
+function drawView(view) {
+    for (let i = 0; i < userConfig.fboNum; i++) {
+        freePalette[i] = true;
+    }
+
+    // console.log(view);
+    const pid = drawRenderable(view);
+    if (pid >= 0) {
+        drawPalette({ fbo: fbos[pid] });
+    }
+}
+
 async function step() {
     if (global_error || loopStopRequested) {
         return;
@@ -1560,16 +1596,20 @@ async function step() {
         scheduleNextStep();
         processControlCommands();
         if (controlPaused && controlStepBudget === 0) {
+            if (pendingScreenshots.length > 0) {
+                // A paused game draws nothing, so redraw the last frame
+                // without updating the model to have something to capture.
+                if (latestRenderTree) {
+                    syncFramebuffers();
+                    drawView(latestRenderTree);
+                    regl._gl.flush();
+                }
+                answerScreenshots();
+            }
             return;
         }
         if (controlStepBudget > 0) controlStepBudget -= 1;
-        regl.poll();
-        const vpWidth = regl._gl.drawingBufferWidth;
-        const vpHeight = regl._gl.drawingBufferHeight;
-
-        for (let i = 0; i < userConfig.fboNum; i++) {
-            fbos[i].resize(vpWidth, vpHeight);
-        }
+        syncFramebuffers();
 
         // const t1 = performance.now();
 
@@ -1588,18 +1628,11 @@ async function step() {
         const gview = RenderablePb.decode(MlApp.view());
         latestRenderTree = gview;
 
-        for (let i = 0; i < userConfig.fboNum; i++) {
-            freePalette[i] = true;
-        }
-
-        // console.log(gview);
-        const pid = drawRenderable(gview);
-        if (pid >= 0) {
-            drawPalette({ fbo: fbos[pid] });
-        }
+        drawView(gview);
         // const t3 = performance.now();
         // console.log("Time to render view: " + (t3 - t2) + "ms");
         regl._gl.flush();
+        if (pendingScreenshots.length > 0) answerScreenshots();
         controlFrameNumber += 1;
         if (controlTimeMs != null) controlTimeMs += controlDtMs;
         sendControl({ type: 'frame', frame: controlFrameNumber,
