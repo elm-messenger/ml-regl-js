@@ -312,14 +312,16 @@ function captureScreenshot(canvas, params) {
         crop = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
     }
     // Output size: the captured pixels, or the requested size in virtual
-    // units; never up, and at most max_width wide.
+    // units (whatever part of it is on the canvas), scaled up or down; at
+    // most max_width wide.
     let tw = crop.width;
     let th = crop.height;
     if (params.scale === 'virtual') {
-        tw = region ? region.width : virtW;
-        th = region ? region.height : virtH;
+        const wanted = region ? { width: region.width, height: region.height }
+            : { width: virtW, height: virtH };
+        tw = wanted.width * Math.min(1, crop.width / (wanted.width * ppuX));
+        th = wanted.height * Math.min(1, crop.height / (wanted.height * ppuY));
     }
-    if (tw > crop.width) { th *= crop.width / tw; tw = crop.width; }
     if (params.max_width > 0 && tw > params.max_width) {
         th *= params.max_width / tw;
         tw = params.max_width;
